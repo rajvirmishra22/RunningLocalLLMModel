@@ -1,13 +1,12 @@
 export interface ModelProfile {
   id: string;
   name: string;
-  runtimeType: "ollama" | "llamacpp" | "transformers" | "webllm";
+  runtimeType: "webllm";
   modelIdentifier: string;
   contextLength: number;
   temperature: number;
   topP: number;
   maxTokens: number;
-  gpuLayers?: number;
   compatibility: "supported" | "experimental" | "unsupported";
 }
 
@@ -29,9 +28,8 @@ export interface Message {
 }
 
 export interface AppSettings {
-  ollamaUrl: string;
-  llamaServerUrl: string;
-  modelDiscoveryEnabled: boolean;
+  // Reserved for future preferences. Kept as an object so settings can grow without migrations.
+  _placeholder?: never;
 }
 
 const STORAGE_KEYS = {
@@ -40,11 +38,87 @@ const STORAGE_KEYS = {
   SETTINGS: "lms_settings",
 };
 
-const DEFAULT_SETTINGS: AppSettings = {
-  ollamaUrl: "http://localhost:11434",
-  llamaServerUrl: "http://localhost:8080",
-  modelDiscoveryEnabled: false,
+const DEFAULT_SETTINGS: AppSettings = {};
+
+const VALID_WEBLLM_IDS = new Set([
+  "Llama-3.2-1B-Instruct-q4f32_1-MLC",
+  "Llama-3.2-3B-Instruct-q4f32_1-MLC",
+  "Qwen2.5-1.5B-Instruct-q4f32_1-MLC",
+  "Qwen2.5-3B-Instruct-q4f32_1-MLC",
+  "Phi-3.5-mini-instruct-q4f16_1-MLC",
+  "Mistral-7B-Instruct-v0.3-q4f16_1-MLC",
+  "Llama-3.1-8B-Instruct-q4f32_1-MLC",
+]);
+
+const LEGACY_OLLAMA_TO_WEBLLM: Record<string, { id: string; label: string }> = {
+  "llama3.2:1b": { id: "Llama-3.2-1B-Instruct-q4f32_1-MLC", label: "Llama 3.2 1B" },
+  "llama3.2:3b": { id: "Llama-3.2-3B-Instruct-q4f32_1-MLC", label: "Llama 3.2 3B" },
+  "qwen2.5:1.5b": { id: "Qwen2.5-1.5B-Instruct-q4f32_1-MLC", label: "Qwen 2.5 1.5B" },
+  "qwen2.5:3b": { id: "Qwen2.5-3B-Instruct-q4f32_1-MLC", label: "Qwen 2.5 3B" },
+  "phi3.5:mini": { id: "Phi-3.5-mini-instruct-q4f16_1-MLC", label: "Phi 3.5 Mini" },
+  "mistral:7b": { id: "Mistral-7B-Instruct-v0.3-q4f16_1-MLC", label: "Mistral 7B" },
+  "llama3.1:8b": { id: "Llama-3.1-8B-Instruct-q4f32_1-MLC", label: "Llama 3.1 8B" },
 };
+
+interface LegacyProfile {
+  id: string;
+  name: string;
+  runtimeType: string;
+  modelIdentifier: string;
+  contextLength?: number;
+  temperature?: number;
+  topP?: number;
+  maxTokens?: number;
+  compatibility?: "supported" | "experimental" | "unsupported";
+}
+
+function migrateProfiles(raw: unknown): ModelProfile[] {
+  if (!Array.isArray(raw)) return [];
+  const migrated: ModelProfile[] = [];
+  const seenIdentifiers = new Set<string>();
+
+  for (const p of raw as LegacyProfile[]) {
+    if (!p || typeof p !== "object" || !p.id || !p.modelIdentifier) continue;
+
+    // Already a valid webllm profile
+    if (p.runtimeType === "webllm" && VALID_WEBLLM_IDS.has(p.modelIdentifier)) {
+      if (seenIdentifiers.has(p.modelIdentifier)) continue;
+      seenIdentifiers.add(p.modelIdentifier);
+      migrated.push({
+        id: p.id,
+        name: p.name,
+        runtimeType: "webllm",
+        modelIdentifier: p.modelIdentifier,
+        contextLength: p.contextLength ?? 4096,
+        temperature: p.temperature ?? 0.7,
+        topP: p.topP ?? 0.9,
+        maxTokens: p.maxTokens ?? 2048,
+        compatibility: p.compatibility ?? "supported",
+      });
+      continue;
+    }
+
+    // Legacy Ollama profile we know how to map
+    const mapped = LEGACY_OLLAMA_TO_WEBLLM[p.modelIdentifier];
+    if (mapped && !seenIdentifiers.has(mapped.id)) {
+      seenIdentifiers.add(mapped.id);
+      migrated.push({
+        id: p.id,
+        name: mapped.label,
+        runtimeType: "webllm",
+        modelIdentifier: mapped.id,
+        contextLength: p.contextLength ?? 4096,
+        temperature: p.temperature ?? 0.7,
+        topP: p.topP ?? 0.9,
+        maxTokens: p.maxTokens ?? 2048,
+        compatibility: "supported",
+      });
+    }
+    // Otherwise: drop the legacy profile (llama.cpp / unknown ollama / GGUF paths)
+  }
+
+  return migrated;
+}
 
 export const storageService = {
   getSettings(): AppSettings {
@@ -65,7 +139,13 @@ export const storageService = {
     const raw = localStorage.getItem(STORAGE_KEYS.MODELS);
     if (!raw) return [];
     try {
-      return JSON.parse(raw);
+      const parsed = JSON.parse(raw);
+      const migrated = migrateProfiles(parsed);
+      // If migration changed anything, persist the cleaned list so this only runs once.
+      if (JSON.stringify(migrated) !== JSON.stringify(parsed)) {
+        localStorage.setItem(STORAGE_KEYS.MODELS, JSON.stringify(migrated));
+      }
+      return migrated;
     } catch {
       return [];
     }
@@ -91,7 +171,7 @@ export const storageService = {
     const raw = localStorage.getItem(STORAGE_KEYS.CONVERSATIONS);
     if (!raw) return [];
     try {
-      return JSON.parse(raw).sort((a: Conversation, b: Conversation) => 
+      return JSON.parse(raw).sort((a: Conversation, b: Conversation) =>
         new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
       );
     } catch {
@@ -119,7 +199,7 @@ export const storageService = {
     if (!localStorage.getItem(STORAGE_KEYS.MODELS)) {
       this.saveModelProfile({
         id: "profile_1",
-        name: "Llama 3.2 1B (Browser)",
+        name: "Llama 3.2 1B",
         runtimeType: "webllm",
         modelIdentifier: "Llama-3.2-1B-Instruct-q4f32_1-MLC",
         contextLength: 4096,
@@ -130,9 +210,9 @@ export const storageService = {
       });
       this.saveModelProfile({
         id: "profile_2",
-        name: "Llama 3.2 1B (Ollama)",
-        runtimeType: "ollama",
-        modelIdentifier: "llama3.2:1b",
+        name: "Qwen 2.5 1.5B",
+        runtimeType: "webllm",
+        modelIdentifier: "Qwen2.5-1.5B-Instruct-q4f32_1-MLC",
         contextLength: 4096,
         temperature: 0.7,
         topP: 0.9,
@@ -158,7 +238,7 @@ export const storageService = {
           {
             id: "msg_2",
             role: "assistant",
-            content: "Yes! I am running entirely on your local machine. No data is sent to the cloud.",
+            content: "Yes! I am running entirely in your browser via WebGPU. No data is sent to the cloud.",
             timestamp: new Date().toISOString()
           }
         ]

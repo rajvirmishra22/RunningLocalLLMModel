@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Plus, Trash2, Edit2, ChevronDown, ChevronUp, AlertCircle, Globe } from "lucide-react";
+import { Plus, Trash2, Edit2, AlertCircle, Globe } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -19,7 +19,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { storageService, ModelProfile } from "@/services/storageService";
-import { ollamaService, OllamaModel } from "@/services/ollamaService";
 import { webllmService, WEBLLM_MODELS } from "@/services/webllmService";
 
 const EMPTY_PROFILE: Omit<ModelProfile, "id"> = {
@@ -30,7 +29,6 @@ const EMPTY_PROFILE: Omit<ModelProfile, "id"> = {
   temperature: 0.7,
   topP: 0.9,
   maxTokens: 2048,
-  gpuLayers: 0,
   compatibility: "supported",
 };
 
@@ -40,50 +38,22 @@ const compatColors: Record<string, string> = {
   unsupported: "bg-red-500/10 text-red-500 border-red-500/20",
 };
 
-const runtimeColors: Record<string, string> = {
-  ollama: "bg-blue-500/10 text-blue-400 border-blue-500/20",
-  llamacpp: "bg-purple-500/10 text-purple-400 border-purple-500/20",
-  transformers: "bg-orange-500/10 text-orange-400 border-orange-500/20",
-  webllm: "bg-green-500/10 text-green-500 border-green-500/20",
-};
-
-const runtimeLabels: Record<string, string> = {
-  ollama: "Ollama",
-  llamacpp: "llama.cpp",
-  transformers: "Transformers.js",
-  webllm: "Browser",
-};
-
 export default function Models() {
   const [profiles, setProfiles] = useState<ModelProfile[]>([]);
-  const [ollamaModels, setOllamaModels] = useState<OllamaModel[]>([]);
-  const [ollamaError, setOllamaError] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingProfile, setEditingProfile] = useState<ModelProfile | null>(null);
   const [form, setForm] = useState<Omit<ModelProfile, "id">>(EMPTY_PROFILE);
-  const [ollamaAddInput, setOllamaAddInput] = useState("");
-  const [showOllamaAdd, setShowOllamaAdd] = useState(false);
   const webgpuAvailable = webllmService.checkWebGPU();
-
-  const settings = storageService.getSettings();
 
   const loadData = () => {
     setProfiles(storageService.getModelProfiles());
-    ollamaService.listOllamaModels(settings.ollamaUrl).then((models) => {
-      if (models.length > 0) {
-        setOllamaModels(models);
-        setOllamaError(false);
-      } else {
-        setOllamaError(true);
-      }
-    });
   };
 
   useEffect(() => { loadData(); }, []);
 
-  const openAdd = (defaultRuntime?: ModelProfile["runtimeType"]) => {
+  const openAdd = () => {
     setEditingProfile(null);
-    setForm({ ...EMPTY_PROFILE, runtimeType: defaultRuntime ?? "webllm" });
+    setForm({ ...EMPTY_PROFILE });
     setDialogOpen(true);
   };
 
@@ -109,25 +79,6 @@ export default function Models() {
     loadData();
   };
 
-  const handleAddOllamaByName = () => {
-    if (!ollamaAddInput.trim()) return;
-    const profile: ModelProfile = {
-      id: `profile_${Date.now()}`,
-      name: ollamaAddInput.trim(),
-      runtimeType: "ollama",
-      modelIdentifier: ollamaAddInput.trim(),
-      contextLength: 4096,
-      temperature: 0.7,
-      topP: 0.9,
-      maxTokens: 2048,
-      compatibility: "supported",
-    };
-    storageService.saveModelProfile(profile);
-    setOllamaAddInput("");
-    setShowOllamaAdd(false);
-    loadData();
-  };
-
   const addWebLLMModel = (model: typeof WEBLLM_MODELS[0]) => {
     const exists = profiles.some((p) => p.modelIdentifier === model.id);
     if (exists) return;
@@ -140,14 +91,10 @@ export default function Models() {
       temperature: 0.7,
       topP: 0.9,
       maxTokens: 2048,
-      compatibility: "supported",
+      compatibility: model.sizeMb >= 4000 ? "experimental" : "supported",
     });
     loadData();
   };
-
-  const webllmProfiles = profiles.filter((p) => p.runtimeType === "webllm");
-  const ollamaProfiles = profiles.filter((p) => p.runtimeType === "ollama");
-  const localProfiles = profiles.filter((p) => p.runtimeType === "llamacpp" || p.runtimeType === "transformers");
 
   return (
     <div className="h-full overflow-y-auto">
@@ -155,169 +102,76 @@ export default function Models() {
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-xl font-semibold">Models</h1>
-            <p className="text-sm text-muted-foreground mt-0.5">Manage your model profiles</p>
+            <p className="text-sm text-muted-foreground mt-0.5">Manage your in-browser model profiles</p>
           </div>
-          <Button size="sm" onClick={() => openAdd()} data-testid="btn-add-profile" className="gap-2">
+          <Button size="sm" onClick={openAdd} data-testid="btn-add-profile" className="gap-2">
             <Plus className="w-3.5 h-3.5" />
             Add Profile
           </Button>
         </div>
 
-        {/* In-Browser Models (WebLLM) */}
+        {!webgpuAvailable && (
+          <div className="flex items-center gap-2 p-3 rounded-lg bg-yellow-500/10 border border-yellow-500/20">
+            <AlertCircle className="w-4 h-4 text-yellow-500 flex-shrink-0" />
+            <p className="text-xs text-yellow-500">
+              WebGPU is not available. Use Chrome 113+ or Edge 113+ for in-browser inference.
+            </p>
+          </div>
+        )}
+
+        {/* Your Profiles */}
         <section>
           <div className="flex items-center gap-2 mb-3">
             <Globe className="w-4 h-4 text-green-500" />
-            <h2 className="text-sm font-semibold">In-Browser Models</h2>
+            <h2 className="text-sm font-semibold">Your Models</h2>
             <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-green-500/10 text-green-500 border border-green-500/20 font-medium">
               No install needed
             </span>
           </div>
 
-          {!webgpuAvailable && (
-            <div className="flex items-center gap-2 p-3 rounded-lg bg-muted/50 border border-border mb-3">
-              <AlertCircle className="w-4 h-4 text-muted-foreground flex-shrink-0" />
-              <p className="text-xs text-muted-foreground">
-                WebGPU is not available. Use Chrome 113+ or Edge 113+ for browser-native inference.
-              </p>
+          {profiles.length === 0 ? (
+            <EmptyState message="No models added yet. Pick from the catalog below to get started." />
+          ) : (
+            <div className="space-y-2">
+              {profiles.map((profile) => (
+                <ProfileCard key={profile.id} profile={profile} onEdit={openEdit} onDelete={handleDelete} />
+              ))}
             </div>
           )}
+        </section>
 
-          {webllmProfiles.length === 0 ? (
-            <div className="rounded-lg border border-dashed border-border p-4 mb-3">
-              <p className="text-xs text-muted-foreground text-center mb-3">
-                No browser models added. Pick from the list below or add a custom profile.
-              </p>
-              <div className="grid grid-cols-2 gap-2">
-                {WEBLLM_MODELS.slice(0, 4).map((m) => (
-                  <button
-                    key={m.id}
-                    onClick={() => addWebLLMModel(m)}
-                    className="text-left p-2.5 rounded-md border border-border hover:border-primary/50 hover:bg-muted/50 transition-colors"
-                    data-testid={`btn-quick-add-${m.id}`}
-                  >
+        {/* Model Catalog */}
+        <section>
+          <h2 className="text-sm font-semibold mb-1">Model Catalog</h2>
+          <p className="text-xs text-muted-foreground mb-3">
+            Click Add to save a model to your profiles. The model file downloads when you first chat with it.
+          </p>
+          <div className="grid grid-cols-2 gap-2">
+            {WEBLLM_MODELS.map((m) => {
+              const added = profiles.some((p) => p.modelIdentifier === m.id);
+              return (
+                <div
+                  key={m.id}
+                  className="flex items-center justify-between p-3 rounded-md border border-border"
+                >
+                  <div className="min-w-0 flex-1">
                     <p className="text-xs font-semibold">{m.label}</p>
-                    <p className="text-[10px] text-muted-foreground mt-0.5">{(m.sizeMb / 1000).toFixed(1)} GB · {m.description.slice(0, 35)}</p>
-                  </button>
-                ))}
-              </div>
-            </div>
-          ) : (
-            <div className="space-y-2 mb-3">
-              {webllmProfiles.map((profile) => (
-                <ProfileCard key={profile.id} profile={profile} onEdit={openEdit} onDelete={handleDelete} />
-              ))}
-            </div>
-          )}
-
-          {webllmProfiles.length > 0 && (
-            <details className="group">
-              <summary className="text-xs text-muted-foreground cursor-pointer hover:text-foreground transition-colors list-none flex items-center gap-1 mb-2">
-                <ChevronDown className="w-3.5 h-3.5 group-open:rotate-180 transition-transform" />
-                Browse more browser models
-              </summary>
-              <div className="grid grid-cols-2 gap-2 mt-2">
-                {WEBLLM_MODELS.map((m) => {
-                  const added = profiles.some((p) => p.modelIdentifier === m.id);
-                  return (
-                    <div
-                      key={m.id}
-                      className="flex items-center justify-between p-2.5 rounded-md border border-border"
-                    >
-                      <div className="min-w-0">
-                        <p className="text-xs font-semibold">{m.label}</p>
-                        <p className="text-[10px] text-muted-foreground">{(m.sizeMb / 1000).toFixed(1)} GB</p>
-                      </div>
-                      <Button
-                        size="sm"
-                        variant={added ? "outline" : "default"}
-                        className="h-6 text-[10px] px-2 flex-shrink-0"
-                        disabled={added}
-                        onClick={() => addWebLLMModel(m)}
-                        data-testid={`btn-add-webllm-${m.id}`}
-                      >
-                        {added ? "Added" : "Add"}
-                      </Button>
-                    </div>
-                  );
-                })}
-              </div>
-            </details>
-          )}
-        </section>
-
-        {/* Ollama Models */}
-        <section>
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="text-sm font-semibold">Ollama Models</h2>
-            <button
-              onClick={() => setShowOllamaAdd(!showOllamaAdd)}
-              className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
-              data-testid="btn-toggle-ollama-add"
-            >
-              Add by name
-              {showOllamaAdd ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
-            </button>
-          </div>
-
-          {showOllamaAdd && (
-            <div className="flex gap-2 mb-3" data-testid="ollama-add-form">
-              <Input
-                value={ollamaAddInput}
-                onChange={(e) => setOllamaAddInput(e.target.value)}
-                placeholder="e.g. llama3.2:1b"
-                className="font-mono text-sm h-8 flex-1"
-                data-testid="input-ollama-model-name"
-                onKeyDown={(e) => e.key === "Enter" && handleAddOllamaByName()}
-              />
-              <Button size="sm" onClick={handleAddOllamaByName} data-testid="btn-confirm-add-ollama">Add</Button>
-            </div>
-          )}
-
-          {ollamaError && (
-            <div className="flex items-center gap-2 p-3 rounded-lg bg-muted/50 border border-border mb-3">
-              <AlertCircle className="w-4 h-4 text-muted-foreground flex-shrink-0" />
-              <p className="text-xs text-muted-foreground">
-                Ollama isn't reachable. Installed model list unavailable.{" "}
-                <a href="/" className="underline">Check setup</a>
-              </p>
-            </div>
-          )}
-
-          {ollamaModels.length > 0 && (
-            <div className="mb-3 space-y-1.5">
-              <p className="text-xs text-muted-foreground mb-2">Installed in Ollama:</p>
-              {ollamaModels.map((m) => (
-                <div key={m.name} data-testid={`ollama-installed-${m.name}`} className="flex items-center justify-between px-3 py-2 rounded-md bg-muted/40 border border-border/50">
-                  <span className="text-xs font-mono font-medium">{m.name}</span>
-                  <span className="text-[10px] text-muted-foreground">{(m.size / 1e9).toFixed(1)} GB</span>
+                    <p className="text-[10px] text-muted-foreground mt-0.5">{(m.sizeMb / 1000).toFixed(1)} GB · {m.description}</p>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant={added ? "outline" : "default"}
+                    className="h-7 text-[11px] px-2.5 flex-shrink-0 ml-2"
+                    disabled={added}
+                    onClick={() => addWebLLMModel(m)}
+                    data-testid={`btn-add-webllm-${m.id}`}
+                  >
+                    {added ? "Added" : "Add"}
+                  </Button>
                 </div>
-              ))}
-            </div>
-          )}
-
-          {ollamaProfiles.length === 0 ? (
-            <EmptyState message="No Ollama profiles yet. Add one above or click Add Profile." />
-          ) : (
-            <div className="space-y-2">
-              {ollamaProfiles.map((profile) => (
-                <ProfileCard key={profile.id} profile={profile} onEdit={openEdit} onDelete={handleDelete} />
-              ))}
-            </div>
-          )}
-        </section>
-
-        {/* GGUF / Local Models */}
-        <section>
-          <h2 className="text-sm font-semibold mb-3">GGUF / Local Models</h2>
-          {localProfiles.length === 0 ? (
-            <EmptyState message="No local model profiles yet. Click Add Profile and choose llama.cpp." />
-          ) : (
-            <div className="space-y-2">
-              {localProfiles.map((profile) => (
-                <ProfileCard key={profile.id} profile={profile} onEdit={openEdit} onDelete={handleDelete} />
-              ))}
-            </div>
-          )}
+              );
+            })}
+          </div>
         </section>
       </div>
 
@@ -342,50 +196,20 @@ export default function Models() {
             </div>
 
             <div className="space-y-1.5">
-              <Label className="text-xs">Runtime</Label>
-              <Select value={form.runtimeType} onValueChange={(v) => setForm({ ...form, runtimeType: v as ModelProfile["runtimeType"] })}>
-                <SelectTrigger className="h-8 text-sm" data-testid="select-runtime">
-                  <SelectValue />
+              <Label className="text-xs">Browser Model</Label>
+              <Select value={form.modelIdentifier} onValueChange={(v) => setForm({ ...form, modelIdentifier: v })}>
+                <SelectTrigger className="h-8 text-sm" data-testid="select-webllm-model">
+                  <SelectValue placeholder="Select a model" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="webllm">Browser (WebLLM) — no install</SelectItem>
-                  <SelectItem value="ollama">Ollama</SelectItem>
-                  <SelectItem value="llamacpp">llama.cpp</SelectItem>
-                  <SelectItem value="transformers">Transformers.js</SelectItem>
+                  {WEBLLM_MODELS.map((m) => (
+                    <SelectItem key={m.id} value={m.id} className="text-xs">
+                      {m.label} ({(m.sizeMb / 1000).toFixed(1)} GB)
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
-
-            {form.runtimeType === "webllm" ? (
-              <div className="space-y-1.5">
-                <Label className="text-xs">Browser Model</Label>
-                <Select value={form.modelIdentifier} onValueChange={(v) => setForm({ ...form, modelIdentifier: v })}>
-                  <SelectTrigger className="h-8 text-sm" data-testid="select-webllm-model">
-                    <SelectValue placeholder="Select a model" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {WEBLLM_MODELS.map((m) => (
-                      <SelectItem key={m.id} value={m.id} className="text-xs">
-                        {m.label} ({(m.sizeMb / 1000).toFixed(1)} GB)
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            ) : (
-              <div className="space-y-1.5">
-                <Label className="text-xs">
-                  {form.runtimeType === "ollama" ? "Ollama Model Name" : "GGUF File Path"}
-                </Label>
-                <Input
-                  value={form.modelIdentifier}
-                  onChange={(e) => setForm({ ...form, modelIdentifier: e.target.value })}
-                  placeholder={form.runtimeType === "ollama" ? "llama3.2:1b" : "/path/to/model.gguf"}
-                  className="h-8 text-sm font-mono"
-                  data-testid="input-model-identifier"
-                />
-              </div>
-            )}
 
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
@@ -405,13 +229,6 @@ export default function Models() {
                 <Input type="number" step="0.05" min="0" max="1" value={form.topP} onChange={(e) => setForm({ ...form, topP: Number(e.target.value) })} className="h-8 text-sm" data-testid="input-top-p" />
               </div>
             </div>
-
-            {form.runtimeType === "llamacpp" && (
-              <div className="space-y-1.5">
-                <Label className="text-xs">GPU Layers</Label>
-                <Input type="number" value={form.gpuLayers ?? 0} onChange={(e) => setForm({ ...form, gpuLayers: Number(e.target.value) })} className="h-8 text-sm" data-testid="input-gpu-layers" />
-              </div>
-            )}
 
             <div className="space-y-1.5">
               <Label className="text-xs">Compatibility</Label>
@@ -447,10 +264,8 @@ function ProfileCard({ profile, onEdit, onDelete }: { profile: ModelProfile; onE
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2 flex-wrap">
+              <Globe className="w-3.5 h-3.5 text-green-500 flex-shrink-0" />
               <span className="text-sm font-medium">{profile.name}</span>
-              <span className={`text-[10px] px-1.5 py-0.5 rounded border font-medium ${runtimeColors[profile.runtimeType]}`}>
-                {runtimeLabels[profile.runtimeType]}
-              </span>
               <span className={`text-[10px] px-1.5 py-0.5 rounded border font-medium ${compatColors[profile.compatibility]}`}>
                 {profile.compatibility}
               </span>
@@ -460,9 +275,6 @@ function ProfileCard({ profile, onEdit, onDelete }: { profile: ModelProfile; onE
               <StatChip label="ctx" value={`${profile.contextLength}`} />
               <StatChip label="temp" value={`${profile.temperature}`} />
               <StatChip label="max_t" value={`${profile.maxTokens}`} />
-              {profile.runtimeType === "llamacpp" && profile.gpuLayers !== undefined && (
-                <StatChip label="gpu_layers" value={`${profile.gpuLayers}`} />
-              )}
             </div>
           </div>
           <div className="flex items-center gap-1 flex-shrink-0">

@@ -13,7 +13,6 @@ import {
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import { storageService, Conversation, Message, ModelProfile } from "@/services/storageService";
-import { ollamaService } from "@/services/ollamaService";
 import { webllmService, InitProgress } from "@/services/webllmService";
 
 type LoadState =
@@ -30,16 +29,13 @@ export default function Chat() {
   const [input, setInput] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
   const [streamingContent, setStreamingContent] = useState("");
-  const [ollamaReachable, setOllamaReachable] = useState<boolean | null>(null);
   const [webllmLoad, setWebllmLoad] = useState<LoadState>({ type: "idle" });
   const abortRef = useRef<AbortController | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
-  const settings = storageService.getSettings();
 
   const activeConv = conversations.find((c) => c.id === activeConvId) ?? null;
   const selectedProfile = profiles.find((p) => p.id === selectedProfileId);
-  const isWebLLM = selectedProfile?.runtimeType === "webllm";
-  const webllmReady = isWebLLM && webllmService.getLoadedModelId() === selectedProfile?.modelIdentifier;
+  const webllmReady = !!selectedProfile && webllmService.getLoadedModelId() === selectedProfile.modelIdentifier;
 
   const loadData = () => {
     const convs = storageService.getConversations();
@@ -53,16 +49,14 @@ export default function Chat() {
 
   useEffect(() => {
     loadData();
-    ollamaService.checkOllamaStatus(settings.ollamaUrl).then(setOllamaReachable);
   }, []);
 
-  // Reset webllm load state when model changes
   useEffect(() => {
-    if (!isWebLLM) {
+    if (!selectedProfile) {
       setWebllmLoad({ type: "idle" });
       return;
     }
-    const alreadyLoaded = webllmService.getLoadedModelId() === selectedProfile?.modelIdentifier;
+    const alreadyLoaded = webllmService.getLoadedModelId() === selectedProfile.modelIdentifier;
     setWebllmLoad(alreadyLoaded ? { type: "ready" } : { type: "idle" });
   }, [selectedProfileId]);
 
@@ -110,7 +104,7 @@ export default function Chat() {
 
   const sendMessage = async () => {
     if (!input.trim() || isGenerating || !selectedProfile) return;
-    if (isWebLLM && !webllmReady) return;
+    if (!webllmReady) return;
 
     let conv = activeConv;
     if (!conv) {
@@ -198,27 +192,15 @@ export default function Chat() {
       setIsGenerating(false);
     };
 
-    if (isWebLLM) {
-      await webllmService.streamChat(
-        selectedProfile.modelIdentifier,
-        messagesForLLM,
-        { temperature: selectedProfile.temperature, maxTokens: selectedProfile.maxTokens, topP: selectedProfile.topP },
-        onToken,
-        onDone,
-        onError,
-        controller
-      );
-    } else {
-      await ollamaService.streamChatCompletion(
-        settings.ollamaUrl,
-        selectedProfile.modelIdentifier,
-        messagesForLLM,
-        onToken,
-        onDone,
-        onError,
-        controller
-      );
-    }
+    await webllmService.streamChat(
+      selectedProfile.modelIdentifier,
+      messagesForLLM,
+      { temperature: selectedProfile.temperature, maxTokens: selectedProfile.maxTokens, topP: selectedProfile.topP },
+      onToken,
+      onDone,
+      onError,
+      controller
+    );
   };
 
   const stopGeneration = () => {
@@ -234,7 +216,7 @@ export default function Chat() {
     }
   };
 
-  const canSend = input.trim().length > 0 && !isGenerating && profiles.length > 0 && (!isWebLLM || webllmReady);
+  const canSend = input.trim().length > 0 && !isGenerating && profiles.length > 0 && webllmReady;
 
   return (
     <div className="flex h-full">
@@ -310,7 +292,7 @@ export default function Chat() {
                 {profiles.map((p) => (
                   <SelectItem key={p.id} value={p.id} className="text-xs">
                     <span className="flex items-center gap-2">
-                      {p.runtimeType === "webllm" && <Globe className="w-3 h-3 text-green-500" />}
+                      <Globe className="w-3 h-3 text-green-500" />
                       {p.name}
                     </span>
                   </SelectItem>
@@ -319,15 +301,9 @@ export default function Chat() {
             </Select>
           )}
 
-          {isWebLLM && (
+          {selectedProfile && (
             <span className="text-[10px] px-2 py-0.5 rounded-full bg-green-500/10 text-green-500 border border-green-500/20 font-medium">
               In-Browser
-            </span>
-          )}
-
-          {!isWebLLM && ollamaReachable === false && (
-            <span className="text-[11px] text-destructive ml-2">
-              Ollama not running — <a href="/" className="underline">check setup</a>
             </span>
           )}
 
@@ -348,10 +324,10 @@ export default function Chat() {
         </div>
 
         {/* WebLLM load banner */}
-        {isWebLLM && webllmLoad.type !== "ready" && (
+        {selectedProfile && webllmLoad.type !== "ready" && (
           <WebLLMLoadBanner
             state={webllmLoad}
-            modelName={selectedProfile?.name ?? ""}
+            modelName={selectedProfile.name}
             onLoad={handleLoadWebLLM}
           />
         )}
@@ -405,14 +381,14 @@ export default function Chat() {
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={handleKeyDown}
                 placeholder={
-                  isWebLLM && webllmLoad.type !== "ready"
+                  webllmLoad.type !== "ready"
                     ? "Load the model above before chatting..."
                     : "Type a message… (Enter to send, Shift+Enter for newline)"
                 }
                 className="flex-1 min-h-[40px] max-h-36 resize-none text-sm py-2.5 pr-2"
                 rows={1}
                 data-testid="input-chat-message"
-                disabled={isGenerating || (isWebLLM && webllmLoad.type !== "ready")}
+                disabled={isGenerating || webllmLoad.type !== "ready"}
               />
               {isGenerating ? (
                 <Button
@@ -466,7 +442,7 @@ function WebLLMLoadBanner({
               <div>
                 <p className="text-xs font-medium">{modelName} runs entirely in your browser</p>
                 <p className="text-[11px] text-muted-foreground">
-                  Downloads once (~0.7–5 GB) via internet, then runs fully offline. No Ollama needed.
+                  Downloads once (~0.7–5 GB) via internet, then runs fully offline.
                 </p>
               </div>
             </div>
