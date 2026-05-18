@@ -1,9 +1,10 @@
 import { Link } from "wouter";
-import { Monitor, Cpu, Zap, AlertTriangle, CheckCircle, XCircle, Plus, MessageSquare, Globe, Sparkles } from "lucide-react";
+import { Monitor, Cpu, Zap, AlertTriangle, CheckCircle, XCircle, Plus, MessageSquare, Globe, Sparkles, HelpCircle } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { useState } from "react";
 import { getSystemInfo } from "@/services/systemInfo";
+import { CapabilityModal } from "@/components/CapabilityModal";
 import { webllmService, WEBLLM_MODELS } from "@/services/webllmService";
 
 const compatColors: Record<string, string> = {
@@ -14,6 +15,7 @@ const compatColors: Record<string, string> = {
 
 export default function Dashboard() {
   const [sysInfo] = useState(() => getSystemInfo());
+  const [showCapability, setShowCapability] = useState(false);
   const webgpuAvailable = webllmService.checkWebGPU();
 
   const ramGb = sysInfo.ram;
@@ -57,7 +59,9 @@ export default function Dashboard() {
         )}
 
         {/* Prominent optimizer CTA — surfaces the Tuning feature from the dashboard
-            so users don't miss it. Picks a model that fits their hardware in one click. */}
+            so users don't miss it. Picks a model that fits their hardware in one click.
+            Sits alongside the "What can I run?" popup button, which is a quick,
+            non-destructive read-only preview (no redirect to the Tuning page). */}
         <Card data-testid="card-optimize-cta" className="border-primary/30 bg-gradient-to-br from-primary/10 via-primary/5 to-transparent">
           <CardContent className="p-4 flex items-center gap-4">
             <div className="w-10 h-10 rounded-lg bg-primary/15 flex items-center justify-center flex-shrink-0">
@@ -69,12 +73,24 @@ export default function Dashboard() {
                 One click — recommends a model from your library, or suggests one to add if nothing fits.
               </p>
             </div>
-            <Link href="/tuning">
-              <Button size="sm" data-testid="btn-optimize-cta" className="gap-1.5 flex-shrink-0">
-                <Sparkles className="w-3.5 h-3.5" />
-                Optimize Model
+            <div className="flex items-center gap-2 flex-shrink-0">
+              <Button
+                size="sm"
+                variant="outline"
+                data-testid="btn-what-can-i-run"
+                onClick={() => setShowCapability(true)}
+                className="gap-1.5"
+              >
+                <HelpCircle className="w-3.5 h-3.5" />
+                What can I run?
               </Button>
-            </Link>
+              <Link href="/tuning">
+                <Button size="sm" data-testid="btn-optimize-cta" className="gap-1.5">
+                  <Sparkles className="w-3.5 h-3.5" />
+                  Optimize Model
+                </Button>
+              </Link>
+            </div>
           </CardContent>
         </Card>
 
@@ -169,6 +185,8 @@ export default function Dashboard() {
           </div>
         </div>
       </div>
+
+      {showCapability && <CapabilityModal onClose={() => setShowCapability(false)} />}
     </div>
   );
 }

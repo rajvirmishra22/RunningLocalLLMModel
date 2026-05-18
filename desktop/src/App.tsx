@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { chat, cancelChat, initModel, onToken, type ModelInfo } from "./api";
 import { loadGen, saveGen, effectiveGen, DEFAULT_GEN, type DesktopGenSettings } from "./storage";
+import { buildDesktopReport } from "./capability";
 import {
   DESKTOP_CAPS,
   recommendDesktop,
@@ -25,6 +26,7 @@ export default function App() {
   const [streaming, setStreaming] = useState("");
   const [gen, setGen] = useState<DesktopGenSettings>(() => loadGen());
   const [tuningOpen, setTuningOpen] = useState(false);
+  const [capabilityOpen, setCapabilityOpen] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -82,6 +84,14 @@ export default function App() {
             {!loadError && !model && <span className="dim">Loading model…</span>}
             {model && <span className="ok">{model.name} · ready</span>}
           </div>
+          <button
+            className="tune-btn"
+            onClick={() => setCapabilityOpen(true)}
+            title="See what your computer can comfortably run"
+          >
+            <span className="tune-icon">?</span>
+            What can I run?
+          </button>
           <button
             className="tune-btn"
             onClick={() => setTuningOpen(true)}
@@ -151,6 +161,103 @@ export default function App() {
           modelName={model?.name ?? "the bundled model"}
         />
       )}
+
+      {capabilityOpen && <CapabilityPanel onClose={() => setCapabilityOpen(false)} />}
+    </div>
+  );
+}
+
+/**
+ * "What can I run?" popup. Read-only — no settings mutation, no redirect to
+ * the Tuning page. Reuses .tuning-backdrop / .tuning-panel for visual
+ * consistency with the rest of the desktop UI.
+ */
+function CapabilityPanel({ onClose }: { onClose: () => void }) {
+  const report = useMemo(() => buildDesktopReport(), []);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  const fitClass =
+    report.performance.memoryFit === "Safe"
+      ? "fit-safe"
+      : report.performance.memoryFit === "Tight"
+        ? "fit-tight"
+        : "fit-risky";
+
+  return (
+    <div className="tuning-backdrop" onClick={onClose}>
+      <div
+        className="tuning-panel"
+        onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="capability-title"
+      >
+        <div className="tuning-header">
+          <h2 id="capability-title">What can your computer run?</h2>
+          <button className="tuning-close" onClick={onClose} aria-label="Close">
+            ✕
+          </button>
+        </div>
+
+        <p className="tuning-sub">
+          {report.hardware.ramApproximate ? `≥ ${report.hardware.ramGb} GB` : `~${report.hardware.ramGb} GB`} RAM
+          {report.hardware.cpuThreads !== "Unknown" ? ` · ${report.hardware.cpuThreads} threads` : ""}
+          {` · ${report.hardware.platform}`}
+        </p>
+
+        <div className="tuning-section">
+          <h3>Your computer can comfortably run</h3>
+          {report.comfortable.length === 0 ? (
+            <p className="tuning-note">No GGUF variants in the catalog fit your memory budget.</p>
+          ) : (
+            <ul className="cap-list">
+              {report.comfortable.map((m) => (
+                <li key={m.label}>
+                  <span>{m.label}</span>
+                  <span className="cap-size">~{m.sizeGb.toFixed(1)} GB{m.bundled ? " · bundled" : ""}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+
+        <div className="tuning-section">
+          <h3>Recommended setup</h3>
+          <div className="cap-kv">
+            <span>Model</span><strong>{report.recommended.modelLabel}</strong>
+            <span>Context</span><strong>{report.recommended.context}</strong>
+            <span>KV cache</span><strong>{report.recommended.kvCache}</strong>
+            <span>FlashAttention</span><strong>{report.recommended.flashAttention}</strong>
+            <span>Backend</span><strong>{report.recommended.backend}</strong>
+            <span>Batch size</span><strong>{report.recommended.batchSize}</strong>
+          </div>
+        </div>
+
+        <div className="tuning-section">
+          <h3>Estimated performance</h3>
+          <div className="cap-kv">
+            <span>Memory fit</span>
+            <strong><span className={`fit-chip ${fitClass}`}>{report.performance.memoryFit}</span></strong>
+            <span>Quality</span><strong>{report.performance.quality}</strong>
+            <span>Speed</span><strong>{report.performance.speed}</strong>
+          </div>
+        </div>
+
+        {report.caveats.length > 0 && (
+          <div className="cap-caveats">
+            {report.caveats.map((c, i) => (
+              <p key={i}>{c}</p>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
