@@ -1,0 +1,208 @@
+You are a senior full-stack engineer building a production-quality MVP for a local AI model desktop app.
+
+Project idea:
+Build an app that lets users run open-source AI models locally on their own device. Users should be able to choose from supported open-source models, connect to local inference engines, and import/open their own models. The app should prioritize privacy, offline/local inference, and efficient performance on consumer laptops.
+
+Important:
+Do NOT build a cloud AI wrapper. The goal is local inference. User prompts and files should not be sent to any external server unless the user explicitly enables optional model downloading/discovery.
+
+Tech stack:
+- Frontend: React + TypeScript
+- Desktop shell: Tauri preferred. Electron is acceptable only if Tauri is too difficult.
+- Styling: Tailwind CSS
+- Backend/local process manager: Rust through Tauri commands, or Node child_process if Electron is used
+- Local model runtimes to support:
+  1. Ollama integration through local HTTP API
+  2. llama.cpp / llama-server integration for GGUF models
+  3. Optional lightweight browser/WebGPU mode using Transformers.js only if feasible
+
+MVP app name:
+LocalModel Studio
+
+Core MVP features:
+
+1. Home / Dashboard
+- Show local system info:
+  - OS
+  - CPU
+  - RAM
+  - GPU if detectable
+  - estimated model size recommendation
+- Display a warning if the device likely cannot run large models.
+- Add a “Recommended Models” section with sample model profiles, but do not bundle huge model files into the app.
+
+2. Model Manager
+Create a model manager screen where users can:
+- Add an Ollama model by name, for example “llama3.2:1b” or “qwen2.5:3b”
+- Import a local GGUF model file
+- Save custom model profiles with:
+  - model name
+  - file path or Ollama model name
+  - runtime type: ollama, llama.cpp, transformers.js
+  - context length
+  - temperature
+  - top_p
+  - max tokens
+  - GPU layers if using llama.cpp
+- Validate the model path before saving.
+- Store profiles locally in a JSON file or SQLite database.
+
+3. Local Runtime Detection
+Implement checks for:
+- Is Ollama installed?
+- Is Ollama running locally?
+- Is llama.cpp / llama-server available?
+- If not installed, show setup instructions inside the app.
+- Do not silently install anything without asking.
+
+4. Chat Interface
+Build a clean ChatGPT-like local chat UI:
+- Sidebar with saved conversations
+- Main chat window
+- Model dropdown
+- Prompt input box
+- Streaming token output if possible
+- Stop generation button
+- Clear conversation button
+- Show inference stats:
+  - tokens per second
+  - total generation time
+  - model used
+  - runtime used
+- Save conversations locally.
+
+5. Ollama Integration
+Implement a service that can:
+- Send chat requests to local Ollama
+- Stream responses if possible
+- List installed Ollama models if possible
+- Allow the user to run a selected model locally
+
+6. llama.cpp / GGUF Integration
+Implement a service that can:
+- Let the user select a .gguf file
+- Start llama-server locally with that GGUF file
+- Connect the chat UI to llama-server using its OpenAI-compatible endpoint
+- Let the user configure:
+  - context length
+  - temperature
+  - max tokens
+  - number of GPU layers
+- Handle process start/stop safely.
+- Show clear errors if the model fails to load.
+
+7. Custom Model Import
+Users should be able to add their own models in these formats:
+- GGUF: supported through llama.cpp / llama-server
+- Ollama model name: supported through Ollama
+- ONNX/Transformers.js models: optional stretch goal
+
+Do NOT claim that every open-source model works. Instead, show compatibility labels:
+- Supported
+- Experimental
+- Not supported yet
+
+8. Efficiency Requirements
+The app should focus on practical local efficiency:
+- Prefer quantized GGUF models for local LLMs
+- Recommend smaller models for low-RAM devices
+- Lazy-load models only when selected
+- Allow unloading/stopping the model server
+- Stream outputs instead of waiting for the whole response
+- Limit context length based on available memory
+- Add a simple benchmark button that runs a short prompt and reports tokens/sec
+- Add model size warnings before loading large files
+- Keep the UI responsive while inference runs
+
+9. Privacy Requirements
+- All chats are stored locally only.
+- No prompts are sent to the cloud.
+- No analytics.
+- No telemetry.
+- Add a visible “Local Mode” indicator.
+- Optional online model discovery can be added later, but must be disabled by default.
+
+10. Error Handling
+Add friendly error messages for:
+- Ollama not installed
+- Ollama not running
+- llama-server not found
+- model file missing
+- model too large for available memory
+- unsupported file format
+- runtime crashes
+- port already in use
+
+11. Project Structure
+Create a clean project structure like:
+
+src/
+  components/
+    ChatWindow.tsx
+    ModelManager.tsx
+    ModelCard.tsx
+    SettingsPanel.tsx
+    RuntimeStatus.tsx
+  services/
+    ollamaService.ts
+    llamaCppService.ts
+    modelRegistry.ts
+    storageService.ts
+  types/
+    model.ts
+    chat.ts
+  pages/
+    Dashboard.tsx
+    Chat.tsx
+    Models.tsx
+    Settings.tsx
+
+If using Tauri:
+src-tauri/
+  commands/
+  process_manager/
+  system_info/
+
+12. UI Design
+Make the app look modern and clean:
+- Dark mode by default
+- Sidebar navigation
+- Cards for models
+- Clear model status badges
+- Simple setup checklist
+- Minimal but professional design
+
+13. First Deliverable
+Build a working MVP with:
+- Dashboard
+- Model Manager
+- Chat UI
+- Ollama integration
+- Local storage for model profiles and chats
+- Runtime status detection
+- Clean error handling
+
+After that, add llama.cpp/GGUF support.
+
+14. Important Implementation Notes
+- Do not hardcode one model only.
+- Use an abstraction layer so multiple runtimes can be supported.
+- Write clean TypeScript types.
+- Keep the code modular.
+- Add comments explaining important local inference logic.
+- Include setup instructions in README.md.
+- Include a “Known Limitations” section explaining that running large models depends on the user’s hardware.
+
+15. README Requirements
+Write a README with:
+- What the app does
+- How to install dependencies
+- How to run in development
+- How to connect Ollama
+- How to import a GGUF model
+- Supported model formats
+- Hardware recommendations
+- Privacy explanation
+- Future roadmap
+
+Build the project step by step. Start by scaffolding the app, then implement the UI, then local storage, then Ollama integration, then llama.cpp support.

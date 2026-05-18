@@ -1,44 +1,57 @@
-# [Project name]
+# LocalModel Studio
 
-_Replace the heading above with the project's name, and this line with one sentence describing what this app does for users._
+A local AI model desktop-style web app that lets users run open-source models privately on their own hardware via Ollama and llama.cpp. All data stays local — no cloud, no telemetry.
 
 ## Run & Operate
 
-- `pnpm --filter @workspace/api-server run dev` — run the API server (port 5000)
+- `pnpm --filter @workspace/localmodel-studio run dev` — run the frontend (workflow: web)
 - `pnpm run typecheck` — full typecheck across all packages
 - `pnpm run build` — typecheck + build all packages
-- `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from the OpenAPI spec
-- `pnpm --filter @workspace/db run push` — push DB schema changes (dev only)
-- Required env: `DATABASE_URL` — Postgres connection string
 
 ## Stack
 
 - pnpm workspaces, Node.js 24, TypeScript 5.9
-- API: Express 5
-- DB: PostgreSQL + Drizzle ORM
-- Validation: Zod (`zod/v4`), `drizzle-zod`
-- API codegen: Orval (from OpenAPI spec)
-- Build: esbuild (CJS bundle)
+- Frontend: React + Vite + Tailwind CSS
+- Routing: wouter
+- UI: shadcn/ui components
+- Animations: framer-motion
+- Storage: localStorage (no database — all data is local to the user's browser)
+- No backend API — connects directly to Ollama's HTTP API at localhost:11434
 
 ## Where things live
 
-_Populate as you build — short repo map plus pointers to the source-of-truth file for DB schema, API contracts, theme files, etc._
+- `artifacts/localmodel-studio/src/` — all frontend source
+- `artifacts/localmodel-studio/src/pages/` — Dashboard, Chat, Models, Settings
+- `artifacts/localmodel-studio/src/services/` — ollamaService, storageService, systemInfo
+- `artifacts/localmodel-studio/src/components/` — shared UI components
+- `artifacts/localmodel-studio/src/index.css` — theme / CSS variables
 
 ## Architecture decisions
 
-_Populate as you build — non-obvious choices a reader couldn't infer from the code (3-5 bullets)._
+- **Frontend-only**: The app is a pure SPA. There is no Express backend. All persistence is via localStorage.
+- **Local inference only**: Ollama API calls go to `localhost:11434` (configurable). Nothing is sent to the cloud.
+- **Dark mode by default**: `dark` class added to `document.documentElement` on mount, persisted in localStorage.
+- **Streaming via fetch**: Chat uses `fetch` with `stream: true` to Ollama's `/api/chat` endpoint, reading a `ReadableStream` for token-by-token output.
+- **No codegen**: No OpenAPI spec or Orval hooks — not needed since there is no custom backend.
 
 ## Product
 
-_Describe the high-level user-facing capabilities of this app once they exist._
+LocalModel Studio gives developers and AI enthusiasts a clean, private UI to:
+- Run Ollama models locally via chat
+- Manage model profiles (Ollama names and GGUF paths)
+- Monitor Ollama/llama.cpp runtime status
+- View system info and hardware recommendations
+- Store all conversations locally in the browser
 
 ## User preferences
 
-_Populate as you build — explicit user instructions worth remembering across sessions._
+- UI should be modern and user friendly, but simple and not too much going on
 
 ## Gotchas
 
-_Populate as you build — sharp edges, "always run X before Y" rules._
+- Ollama must be running locally (`ollama serve`) for any inference features to work
+- CORS: Ollama must be configured to allow requests from the browser origin (set `OLLAMA_ORIGINS=*` env var)
+- The app defaults to dark mode; light mode can be toggled from settings
 
 ## Pointers
 
