@@ -1,5 +1,5 @@
 import { Link } from "wouter";
-import { Monitor, Cpu, Zap, AlertTriangle, CheckCircle, XCircle, Plus, MessageSquare, Globe } from "lucide-react";
+import { Monitor, Cpu, Zap, AlertTriangle, CheckCircle, XCircle, Plus, MessageSquare, Globe, Sparkles } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { useState } from "react";
@@ -55,6 +55,28 @@ export default function Dashboard() {
             </div>
           </div>
         )}
+
+        {/* Prominent optimizer CTA — surfaces the Tuning feature from the dashboard
+            so users don't miss it. Picks a model that fits their hardware in one click. */}
+        <Card data-testid="card-optimize-cta" className="border-primary/30 bg-gradient-to-br from-primary/10 via-primary/5 to-transparent">
+          <CardContent className="p-4 flex items-center gap-4">
+            <div className="w-10 h-10 rounded-lg bg-primary/15 flex items-center justify-center flex-shrink-0">
+              <Sparkles className="w-5 h-5 text-primary" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-semibold">Let the optimizer pick the right model for your hardware</p>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                One click — recommends a model from your library, or suggests one to add if nothing fits.
+              </p>
+            </div>
+            <Link href="/tuning">
+              <Button size="sm" data-testid="btn-optimize-cta" className="gap-1.5 flex-shrink-0">
+                <Sparkles className="w-3.5 h-3.5" />
+                Optimize Model
+              </Button>
+            </Link>
+          </CardContent>
+        </Card>
 
         {webgpuAvailable && (
           <div className="flex items-center gap-3 p-3.5 rounded-lg bg-green-500/10 border border-green-500/20">

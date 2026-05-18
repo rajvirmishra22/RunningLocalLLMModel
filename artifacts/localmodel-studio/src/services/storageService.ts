@@ -7,8 +7,23 @@ export interface ModelProfile {
   temperature: number;
   topP: number;
   maxTokens: number;
+  /**
+   * When false (default), chat generation uses sensible defaults and the
+   * per-profile temperature/topP/maxTokens fields are ignored. Lets casual
+   * users skip the generation-settings knobs entirely without losing the
+   * ability to tune later.
+   */
+  useCustomGeneration: boolean;
   compatibility: "supported" | "experimental" | "unsupported";
 }
+
+/** Defaults used when a profile has `useCustomGeneration: false`. Kept here
+ *  so Chat and Tuning agree on what "use defaults" means. */
+export const DEFAULT_GENERATION = {
+  temperature: 0.7,
+  topP: 0.9,
+  maxTokens: 2048,
+} as const;
 
 export interface Conversation {
   id: string;
@@ -72,6 +87,7 @@ interface LegacyProfile {
   temperature?: number;
   topP?: number;
   maxTokens?: number;
+  useCustomGeneration?: boolean;
   compatibility?: "supported" | "experimental" | "unsupported";
 }
 
@@ -96,6 +112,7 @@ function migrateProfiles(raw: unknown): ModelProfile[] {
         temperature: p.temperature ?? 0.7,
         topP: p.topP ?? 0.9,
         maxTokens: p.maxTokens ?? 2048,
+        useCustomGeneration: p.useCustomGeneration ?? false,
         compatibility: p.compatibility ?? "supported",
       });
       continue;
@@ -114,6 +131,7 @@ function migrateProfiles(raw: unknown): ModelProfile[] {
         temperature: p.temperature ?? 0.7,
         topP: p.topP ?? 0.9,
         maxTokens: p.maxTokens ?? 2048,
+        useCustomGeneration: p.useCustomGeneration ?? false,
         compatibility: "supported",
       });
     }
@@ -209,6 +227,7 @@ export const storageService = {
         temperature: 0.7,
         topP: 0.9,
         maxTokens: 2048,
+        useCustomGeneration: false,
         compatibility: "supported"
       });
       this.saveModelProfile({
@@ -220,6 +239,7 @@ export const storageService = {
         temperature: 0.7,
         topP: 0.9,
         maxTokens: 2048,
+        useCustomGeneration: false,
         compatibility: "supported"
       });
     }

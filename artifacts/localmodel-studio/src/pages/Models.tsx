@@ -29,6 +29,7 @@ const EMPTY_PROFILE: Omit<ModelProfile, "id"> = {
   temperature: 0.7,
   topP: 0.9,
   maxTokens: 2048,
+  useCustomGeneration: false,
   compatibility: "supported",
 };
 
@@ -91,6 +92,7 @@ export default function Models() {
       temperature: 0.7,
       topP: 0.9,
       maxTokens: 2048,
+      useCustomGeneration: false,
       compatibility: model.sizeMb >= 4000 ? "experimental" : "supported",
     });
     loadData();

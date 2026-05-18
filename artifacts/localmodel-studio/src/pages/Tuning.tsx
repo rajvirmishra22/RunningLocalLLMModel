@@ -103,11 +103,15 @@ export default function Tuning() {
         const targetId = recommendation.source.profileId;
         const matched = profiles.find((p) => p.id === targetId);
         if (matched) {
+          // Applying a recommendation is an explicit, deliberate user action,
+          // so we flip on `useCustomGeneration` — otherwise the tuned values
+          // would be saved but ignored at chat time.
           const updated: ModelProfile = {
             ...matched,
             temperature: recommendation.generation.temperature,
             topP: recommendation.generation.topP,
             maxTokens: recommendation.generation.maxTokens,
+            useCustomGeneration: true,
           };
           storageService.saveModelProfile(updated);
           setActiveProfileId(matched.id);
@@ -126,6 +130,7 @@ export default function Tuning() {
         temperature: recommendation.generation.temperature,
         topP: recommendation.generation.topP,
         maxTokens: recommendation.generation.maxTokens,
+        useCustomGeneration: true,
       });
       setProfiles(storageService.getModelProfiles());
       setApplyStatus("Generation settings applied to the current profile.");
@@ -158,6 +163,9 @@ export default function Tuning() {
       temperature: recommendation?.generation.temperature ?? 0.7,
       topP: recommendation?.generation.topP ?? 0.9,
       maxTokens: recommendation?.generation.maxTokens ?? 2048,
+      // Adding a model from the optimizer is an explicit, intentional choice,
+      // so the tuned generation values should actually take effect at chat time.
+      useCustomGeneration: !!recommendation,
       compatibility: model.sizeMb >= 4000 ? "experimental" : "supported",
     });
     const updated = storageService.getModelProfiles();
@@ -234,35 +242,60 @@ export default function Tuning() {
             </div>
 
             {activeProfile && (
-              <div className="grid grid-cols-3 gap-3">
-                <NumberField
-                  label="Temperature"
-                  tooltip="Controls randomness. Lower is more focused, higher is more creative. Range 0–2."
-                  value={activeProfile.temperature}
-                  step={0.1}
-                  min={0}
-                  max={2}
-                  onChange={(v) => updateActive({ temperature: v })}
-                />
-                <NumberField
-                  label="Top-p"
-                  tooltip="Limits token choices to the most likely group of tokens. 0.9 is a good default."
-                  value={activeProfile.topP}
-                  step={0.05}
-                  min={0}
-                  max={1}
-                  onChange={(v) => updateActive({ topP: v })}
-                />
-                <NumberField
-                  label="Max tokens"
-                  tooltip="Hard cap on the length of each response."
-                  value={activeProfile.maxTokens}
-                  step={128}
-                  min={1}
-                  max={8192}
-                  onChange={(v) => updateActive({ maxTokens: v })}
-                />
-              </div>
+              <>
+                {/* Generation knobs hidden behind an opt-in toggle. Casual users
+                    never have to learn what temperature or top-p mean; the chat
+                    flow uses sensible defaults until they flip this on. */}
+                <label
+                  className="flex items-center gap-2.5 text-xs cursor-pointer select-none"
+                  data-testid="toggle-custom-generation"
+                >
+                  <input
+                    type="checkbox"
+                    checked={activeProfile.useCustomGeneration}
+                    onChange={(e) => updateActive({ useCustomGeneration: e.target.checked })}
+                    className="w-3.5 h-3.5 rounded border-border accent-primary cursor-pointer"
+                  />
+                  <span className="font-medium">Use custom generation settings</span>
+                  <span className="text-muted-foreground text-[11px]">
+                    {activeProfile.useCustomGeneration
+                      ? "Using the values below."
+                      : "Off — chat uses sensible defaults (temp 0.7, top-p 0.9, max 2048)."}
+                  </span>
+                </label>
+
+                {activeProfile.useCustomGeneration && (
+                  <div className="grid grid-cols-3 gap-3">
+                    <NumberField
+                      label="Temperature"
+                      tooltip="Controls randomness. Lower is more focused, higher is more creative. Range 0–2."
+                      value={activeProfile.temperature}
+                      step={0.1}
+                      min={0}
+                      max={2}
+                      onChange={(v) => updateActive({ temperature: v })}
+                    />
+                    <NumberField
+                      label="Top-p"
+                      tooltip="Limits token choices to the most likely group of tokens. 0.9 is a good default."
+                      value={activeProfile.topP}
+                      step={0.05}
+                      min={0}
+                      max={1}
+                      onChange={(v) => updateActive({ topP: v })}
+                    />
+                    <NumberField
+                      label="Max tokens"
+                      tooltip="Hard cap on the length of each response."
+                      value={activeProfile.maxTokens}
+                      step={128}
+                      min={1}
+                      max={8192}
+                      onChange={(v) => updateActive({ maxTokens: v })}
+                    />
+                  </div>
+                )}
+              </>
             )}
           </CardContent>
         </Card>

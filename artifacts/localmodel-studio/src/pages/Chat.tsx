@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { Link } from "wouter";
-import { Send, Square, Trash2, Plus, MessageSquare, Clock, Zap, Download, Loader2, AlertCircle, Globe } from "lucide-react";
+import { Send, Square, Trash2, Plus, MessageSquare, Clock, Zap, Download, Loader2, AlertCircle, Globe, Sliders } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -13,7 +13,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
-import { storageService, Conversation, Message, ModelProfile } from "@/services/storageService";
+import { storageService, Conversation, Message, ModelProfile, DEFAULT_GENERATION } from "@/services/storageService";
 import { webllmService, InitProgress } from "@/services/webllmService";
 
 type LoadState =
@@ -193,10 +193,17 @@ export default function Chat() {
       setIsGenerating(false);
     };
 
+    // Honour the profile's `useCustomGeneration` toggle: when off, we ignore
+    // the per-profile knobs and use the shared defaults. This lets casual
+    // users chat without ever touching temperature/top-p/max-tokens.
+    const effectiveGen = selectedProfile.useCustomGeneration
+      ? { temperature: selectedProfile.temperature, maxTokens: selectedProfile.maxTokens, topP: selectedProfile.topP }
+      : { temperature: DEFAULT_GENERATION.temperature, maxTokens: DEFAULT_GENERATION.maxTokens, topP: DEFAULT_GENERATION.topP };
+
     await webllmService.streamChat(
       selectedProfile.modelIdentifier,
       messagesForLLM,
-      { temperature: selectedProfile.temperature, maxTokens: selectedProfile.maxTokens, topP: selectedProfile.topP },
+      effectiveGen,
       onToken,
       onDone,
       onError,
@@ -308,9 +315,20 @@ export default function Chat() {
             </span>
           )}
 
+          <Link href="/tuning" className="ml-auto">
+            <button
+              data-testid="btn-tune-chat"
+              className="flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground hover:bg-muted px-2 py-1 rounded transition-colors"
+              title="Open Model Tuning to pick a model and tweak generation settings"
+            >
+              <Sliders className="w-3 h-3" />
+              Tune
+            </button>
+          </Link>
+
           {activeConv && (
             <button
-              className="ml-auto p-1.5 rounded hover:bg-muted transition-colors"
+              className="p-1.5 rounded hover:bg-muted transition-colors"
               onClick={() => {
                 storageService.deleteConversation(activeConv.id);
                 setActiveConvId(null);
