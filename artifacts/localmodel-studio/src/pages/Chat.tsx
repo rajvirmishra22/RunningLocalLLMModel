@@ -1,8 +1,9 @@
 import { useState, useEffect, useRef } from "react";
-import { Send, Square, Trash2, Plus, MessageSquare, Clock, Zap, ChevronDown } from "lucide-react";
+import { Send, Square, Trash2, Plus, MessageSquare, Clock, Zap, Download, Loader2, AlertCircle, Globe } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Progress } from "@/components/ui/progress";
 import {
   Select,
   SelectContent,
@@ -13,6 +14,13 @@ import {
 import { cn } from "@/lib/utils";
 import { storageService, Conversation, Message, ModelProfile } from "@/services/storageService";
 import { ollamaService } from "@/services/ollamaService";
+import { webllmService, InitProgress } from "@/services/webllmService";
+
+type LoadState =
+  | { type: "idle" }
+  | { type: "loading"; text: string; progress: number }
+  | { type: "ready" }
+  | { type: "error"; message: string };
 
 export default function Chat() {
   const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -23,12 +31,15 @@ export default function Chat() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [streamingContent, setStreamingContent] = useState("");
   const [ollamaReachable, setOllamaReachable] = useState<boolean | null>(null);
+  const [webllmLoad, setWebllmLoad] = useState<LoadState>({ type: "idle" });
   const abortRef = useRef<AbortController | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const settings = storageService.getSettings();
 
   const activeConv = conversations.find((c) => c.id === activeConvId) ?? null;
+  const selectedProfile = profiles.find((p) => p.id === selectedProfileId);
+  const isWebLLM = selectedProfile?.runtimeType === "webllm";
+  const webllmReady = isWebLLM && webllmService.getLoadedModelId() === selectedProfile?.modelIdentifier;
 
   const loadData = () => {
     const convs = storageService.getConversations();
@@ -45,9 +56,36 @@ export default function Chat() {
     ollamaService.checkOllamaStatus(settings.ollamaUrl).then(setOllamaReachable);
   }, []);
 
+  // Reset webllm load state when model changes
+  useEffect(() => {
+    if (!isWebLLM) {
+      setWebllmLoad({ type: "idle" });
+      return;
+    }
+    const alreadyLoaded = webllmService.getLoadedModelId() === selectedProfile?.modelIdentifier;
+    setWebllmLoad(alreadyLoaded ? { type: "ready" } : { type: "idle" });
+  }, [selectedProfileId]);
+
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [activeConv?.messages, streamingContent]);
+
+  const handleLoadWebLLM = async () => {
+    if (!selectedProfile) return;
+    if (!webllmService.checkWebGPU()) {
+      setWebllmLoad({ type: "error", message: "WebGPU is not available in your browser. Use Chrome 113+ or Edge 113+." });
+      return;
+    }
+    setWebllmLoad({ type: "loading", text: "Initializing...", progress: 0 });
+    try {
+      await webllmService.loadModel(selectedProfile.modelIdentifier, (p: InitProgress) => {
+        setWebllmLoad({ type: "loading", text: p.text, progress: p.progress });
+      });
+      setWebllmLoad({ type: "ready" });
+    } catch (err: unknown) {
+      setWebllmLoad({ type: "error", message: err instanceof Error ? err.message : "Failed to load model." });
+    }
+  };
 
   const newConversation = () => {
     const conv: Conversation = {
@@ -71,10 +109,8 @@ export default function Chat() {
   };
 
   const sendMessage = async () => {
-    if (!input.trim() || isGenerating) return;
-
-    const profile = profiles.find((p) => p.id === selectedProfileId);
-    if (!profile) return;
+    if (!input.trim() || isGenerating || !selectedProfile) return;
+    if (isWebLLM && !webllmReady) return;
 
     let conv = activeConv;
     if (!conv) {
@@ -97,7 +133,7 @@ export default function Chat() {
 
     const updatedConv: Conversation = {
       ...conv,
-      title: conv.messages.length === 0 ? (input.slice(0, 40) + (input.length > 40 ? "..." : "")) : conv.title,
+      title: conv.messages.length === 0 ? input.slice(0, 40) + (input.length > 40 ? "..." : "") : conv.title,
       modelId: selectedProfileId,
       updatedAt: new Date().toISOString(),
       messages: [...conv.messages, userMsg],
@@ -113,58 +149,76 @@ export default function Chat() {
     const controller = new AbortController();
     abortRef.current = controller;
 
-    const messagesForOllama = updatedConv.messages.map((m) => ({
-      role: m.role,
+    const messagesForLLM = updatedConv.messages.map((m) => ({
+      role: m.role as "user" | "assistant",
       content: m.content,
     }));
 
     let fullContent = "";
 
-    await ollamaService.streamChatCompletion(
-      settings.ollamaUrl,
-      profile.modelIdentifier,
-      messagesForOllama,
-      (token) => {
-        fullContent += token;
-        setStreamingContent(fullContent);
-      },
-      (stats) => {
-        const assistantMsg: Message = {
-          id: `msg_${Date.now()}_a`,
-          role: "assistant",
-          content: fullContent,
-          timestamp: new Date().toISOString(),
-          stats,
-        };
-        const finalConv: Conversation = {
-          ...updatedConv,
-          updatedAt: new Date().toISOString(),
-          messages: [...updatedConv.messages, assistantMsg],
-        };
-        storageService.saveConversation(finalConv);
-        loadData();
-        setStreamingContent("");
-        setIsGenerating(false);
-      },
-      (err) => {
-        const errMsg: Message = {
-          id: `msg_${Date.now()}_err`,
-          role: "assistant",
-          content: `Generation failed: ${err.message}. Check if your model is still loaded.`,
-          timestamp: new Date().toISOString(),
-        };
-        const errConv: Conversation = {
-          ...updatedConv,
-          updatedAt: new Date().toISOString(),
-          messages: [...updatedConv.messages, errMsg],
-        };
-        storageService.saveConversation(errConv);
-        loadData();
-        setStreamingContent("");
-        setIsGenerating(false);
-      },
-      controller
-    );
+    const onToken = (token: string) => {
+      fullContent += token;
+      setStreamingContent(fullContent);
+    };
+
+    const onDone = (stats: { tokensPerSec: number; totalTimeMs: number; modelUsed: string; runtimeUsed: string }) => {
+      const assistantMsg: Message = {
+        id: `msg_${Date.now()}_a`,
+        role: "assistant",
+        content: fullContent,
+        timestamp: new Date().toISOString(),
+        stats,
+      };
+      const finalConv: Conversation = {
+        ...updatedConv,
+        updatedAt: new Date().toISOString(),
+        messages: [...updatedConv.messages, assistantMsg],
+      };
+      storageService.saveConversation(finalConv);
+      loadData();
+      setStreamingContent("");
+      setIsGenerating(false);
+    };
+
+    const onError = (err: Error) => {
+      const errMsg: Message = {
+        id: `msg_${Date.now()}_err`,
+        role: "assistant",
+        content: `Generation stopped: ${err.message}`,
+        timestamp: new Date().toISOString(),
+      };
+      const errConv: Conversation = {
+        ...updatedConv,
+        updatedAt: new Date().toISOString(),
+        messages: [...updatedConv.messages, errMsg],
+      };
+      storageService.saveConversation(errConv);
+      loadData();
+      setStreamingContent("");
+      setIsGenerating(false);
+    };
+
+    if (isWebLLM) {
+      await webllmService.streamChat(
+        selectedProfile.modelIdentifier,
+        messagesForLLM,
+        { temperature: selectedProfile.temperature, maxTokens: selectedProfile.maxTokens, topP: selectedProfile.topP },
+        onToken,
+        onDone,
+        onError,
+        controller
+      );
+    } else {
+      await ollamaService.streamChatCompletion(
+        settings.ollamaUrl,
+        selectedProfile.modelIdentifier,
+        messagesForLLM,
+        onToken,
+        onDone,
+        onError,
+        controller
+      );
+    }
   };
 
   const stopGeneration = () => {
@@ -180,14 +234,12 @@ export default function Chat() {
     }
   };
 
-  const ollamaProfile = profiles.find((p) => p.id === selectedProfileId);
+  const canSend = input.trim().length > 0 && !isGenerating && profiles.length > 0 && (!isWebLLM || webllmReady);
 
   return (
     <div className="flex h-full">
-      <aside
-        data-testid="chat-sidebar"
-        className="w-52 flex-shrink-0 border-r border-border flex flex-col bg-sidebar"
-      >
+      {/* Conversation sidebar */}
+      <aside data-testid="chat-sidebar" className="w-52 flex-shrink-0 border-r border-border flex flex-col bg-sidebar">
         <div className="p-2 border-b border-sidebar-border">
           <Button
             size="sm"
@@ -200,7 +252,6 @@ export default function Chat() {
             New Chat
           </Button>
         </div>
-
         <ScrollArea className="flex-1">
           <div className="p-1.5 space-y-0.5">
             {conversations.length === 0 ? (
@@ -241,7 +292,9 @@ export default function Chat() {
         </ScrollArea>
       </aside>
 
+      {/* Main chat area */}
       <div className="flex-1 flex flex-col min-w-0">
+        {/* Top bar */}
         <div className="flex items-center gap-3 px-4 h-12 border-b border-border flex-shrink-0">
           {profiles.length === 0 ? (
             <p className="text-xs text-muted-foreground">
@@ -250,26 +303,31 @@ export default function Chat() {
             </p>
           ) : (
             <Select value={selectedProfileId} onValueChange={setSelectedProfileId}>
-              <SelectTrigger
-                className="h-7 w-48 text-xs border-border"
-                data-testid="select-model"
-              >
+              <SelectTrigger className="h-7 w-52 text-xs border-border" data-testid="select-model">
                 <SelectValue placeholder="Select model" />
               </SelectTrigger>
               <SelectContent>
                 {profiles.map((p) => (
                   <SelectItem key={p.id} value={p.id} className="text-xs">
-                    {p.name}
+                    <span className="flex items-center gap-2">
+                      {p.runtimeType === "webllm" && <Globe className="w-3 h-3 text-green-500" />}
+                      {p.name}
+                    </span>
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
           )}
 
-          {ollamaReachable === false && (
-            <span className="text-[11px] text-destructive ml-auto">
-              Ollama not running —{" "}
-              <a href="/" className="underline">check setup</a>
+          {isWebLLM && (
+            <span className="text-[10px] px-2 py-0.5 rounded-full bg-green-500/10 text-green-500 border border-green-500/20 font-medium">
+              In-Browser
+            </span>
+          )}
+
+          {!isWebLLM && ollamaReachable === false && (
+            <span className="text-[11px] text-destructive ml-2">
+              Ollama not running — <a href="/" className="underline">check setup</a>
             </span>
           )}
 
@@ -289,6 +347,16 @@ export default function Chat() {
           )}
         </div>
 
+        {/* WebLLM load banner */}
+        {isWebLLM && webllmLoad.type !== "ready" && (
+          <WebLLMLoadBanner
+            state={webllmLoad}
+            modelName={selectedProfile?.name ?? ""}
+            onLoad={handleLoadWebLLM}
+          />
+        )}
+
+        {/* Messages */}
         <ScrollArea className="flex-1 px-4">
           <div className="py-4 space-y-4 max-w-2xl mx-auto">
             {!activeConv || activeConv.messages.length === 0 ? (
@@ -296,12 +364,14 @@ export default function Chat() {
                 <MessageSquare className="w-10 h-10 text-muted-foreground/30 mb-3" />
                 <p className="text-sm font-medium text-muted-foreground">Start a conversation</p>
                 <p className="text-xs text-muted-foreground/60 mt-1">
-                  {ollomaProfile(ollamaProfile) ? `Using ${ollamaProfile?.name}` : "Select a model above"}
+                  {selectedProfile
+                    ? `Using ${selectedProfile.name}`
+                    : "Select a model above"}
                 </p>
               </div>
             ) : (
               activeConv.messages.map((msg) => (
-                <MessageBubble key={msg.id} message={msg} />
+                <MessageBubble key={msg.id} message={msg} modelName={selectedProfile?.name} />
               ))
             )}
 
@@ -311,10 +381,8 @@ export default function Chat() {
                   <div className="w-2 h-2 rounded-full bg-primary animate-pulse" />
                 </div>
                 <div className="flex-1 min-w-0">
-                  <p className="text-xs text-muted-foreground mb-1">
-                    {ollamaProfile?.name ?? "Assistant"}
-                  </p>
-                  <div className="prose prose-sm dark:prose-invert max-w-none">
+                  <p className="text-xs text-muted-foreground mb-1">{selectedProfile?.name ?? "Assistant"}</p>
+                  <div className="rounded-xl px-3.5 py-2.5 bg-muted max-w-[85%]">
                     <p className="text-sm text-foreground whitespace-pre-wrap leading-relaxed">
                       {streamingContent}
                       <span className="inline-block w-0.5 h-4 bg-primary animate-pulse ml-0.5 align-middle" />
@@ -328,19 +396,23 @@ export default function Chat() {
           </div>
         </ScrollArea>
 
+        {/* Input area */}
         <div className="px-4 py-3 border-t border-border flex-shrink-0">
           <div className="max-w-2xl mx-auto">
             <div className="relative flex items-end gap-2">
               <Textarea
-                ref={textareaRef}
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={handleKeyDown}
-                placeholder="Type a message… (Enter to send, Shift+Enter for newline)"
+                placeholder={
+                  isWebLLM && webllmLoad.type !== "ready"
+                    ? "Load the model above before chatting..."
+                    : "Type a message… (Enter to send, Shift+Enter for newline)"
+                }
                 className="flex-1 min-h-[40px] max-h-36 resize-none text-sm py-2.5 pr-2"
                 rows={1}
                 data-testid="input-chat-message"
-                disabled={isGenerating}
+                disabled={isGenerating || (isWebLLM && webllmLoad.type !== "ready")}
               />
               {isGenerating ? (
                 <Button
@@ -357,7 +429,7 @@ export default function Chat() {
                 <Button
                   size="sm"
                   onClick={sendMessage}
-                  disabled={!input.trim() || profiles.length === 0}
+                  disabled={!canSend}
                   data-testid="btn-send-message"
                   className="h-9"
                 >
@@ -375,17 +447,73 @@ export default function Chat() {
   );
 }
 
-function ollomaProfile(profile: ModelProfile | undefined) {
-  return !!profile;
+function WebLLMLoadBanner({
+  state,
+  modelName,
+  onLoad,
+}: {
+  state: LoadState;
+  modelName: string;
+  onLoad: () => void;
+}) {
+  return (
+    <div className="px-4 py-3 border-b border-border bg-muted/30 flex-shrink-0">
+      <div className="max-w-2xl mx-auto">
+        {state.type === "idle" && (
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex items-center gap-2.5">
+              <Globe className="w-4 h-4 text-green-500 flex-shrink-0" />
+              <div>
+                <p className="text-xs font-medium">{modelName} runs entirely in your browser</p>
+                <p className="text-[11px] text-muted-foreground">
+                  No Ollama needed. Model downloads once (~0.7–5 GB) and is cached locally.
+                </p>
+              </div>
+            </div>
+            <Button size="sm" onClick={onLoad} data-testid="btn-load-webllm" className="gap-1.5 flex-shrink-0">
+              <Download className="w-3.5 h-3.5" />
+              Load Model
+            </Button>
+          </div>
+        )}
+
+        {state.type === "loading" && (
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Loader2 className="w-3.5 h-3.5 text-primary animate-spin flex-shrink-0" />
+                <span className="text-xs font-medium">Loading {modelName}…</span>
+              </div>
+              <span className="text-xs text-muted-foreground tabular-nums">
+                {Math.round(state.progress * 100)}%
+              </span>
+            </div>
+            <Progress value={state.progress * 100} className="h-1.5" data-testid="webllm-progress" />
+            <p className="text-[11px] text-muted-foreground truncate">{state.text}</p>
+          </div>
+        )}
+
+        {state.type === "error" && (
+          <div className="flex items-start gap-2">
+            <AlertCircle className="w-4 h-4 text-destructive flex-shrink-0 mt-0.5" />
+            <div className="flex-1">
+              <p className="text-xs font-medium text-destructive">Failed to load model</p>
+              <p className="text-[11px] text-muted-foreground mt-0.5">{state.message}</p>
+            </div>
+            <Button size="sm" variant="outline" onClick={onLoad} className="flex-shrink-0">
+              Retry
+            </Button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
 }
 
-function MessageBubble({ message }: { message: Message }) {
+function MessageBubble({ message, modelName }: { message: Message; modelName?: string }) {
   const isUser = message.role === "user";
   return (
-    <div
-      data-testid={`message-${message.id}`}
-      className={cn("flex gap-3", isUser ? "flex-row-reverse" : "flex-row")}
-    >
+    <div data-testid={`message-${message.id}`} className={cn("flex gap-3", isUser ? "flex-row-reverse" : "flex-row")}>
       <div
         className={cn(
           "w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5 text-[10px] font-semibold",
@@ -395,24 +523,17 @@ function MessageBubble({ message }: { message: Message }) {
         {isUser ? "U" : "AI"}
       </div>
       <div className={cn("flex-1 min-w-0", isUser ? "flex flex-col items-end" : "")}>
-        {!isUser && (
-          <p className="text-xs text-muted-foreground mb-1">Assistant</p>
-        )}
+        {!isUser && <p className="text-xs text-muted-foreground mb-1">{modelName ?? "Assistant"}</p>}
         <div
           className={cn(
             "rounded-xl px-3.5 py-2.5 max-w-[85%]",
-            isUser
-              ? "bg-primary text-primary-foreground"
-              : "bg-muted text-foreground"
+            isUser ? "bg-primary text-primary-foreground" : "bg-muted text-foreground"
           )}
         >
           <p className="text-sm whitespace-pre-wrap leading-relaxed">{message.content}</p>
         </div>
         {message.stats && (
-          <div
-            data-testid={`stats-${message.id}`}
-            className="flex items-center gap-3 mt-1.5 px-1"
-          >
+          <div data-testid={`stats-${message.id}`} className="flex items-center gap-3 mt-1.5 px-1">
             <StatBit icon={<Zap className="w-3 h-3" />} value={`${message.stats.tokensPerSec.toFixed(1)} tok/s`} />
             <StatBit icon={<Clock className="w-3 h-3" />} value={`${(message.stats.totalTimeMs / 1000).toFixed(1)}s`} />
             <StatBit value={message.stats.runtimeUsed} />

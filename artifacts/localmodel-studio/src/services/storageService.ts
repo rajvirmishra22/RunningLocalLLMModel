@@ -1,7 +1,7 @@
 export interface ModelProfile {
   id: string;
   name: string;
-  runtimeType: "ollama" | "llamacpp" | "transformers";
+  runtimeType: "ollama" | "llamacpp" | "transformers" | "webllm";
   modelIdentifier: string;
   contextLength: number;
   temperature: number;
@@ -119,7 +119,18 @@ export const storageService = {
     if (!localStorage.getItem(STORAGE_KEYS.MODELS)) {
       this.saveModelProfile({
         id: "profile_1",
-        name: "Llama 3.2 1B",
+        name: "Llama 3.2 1B (Browser)",
+        runtimeType: "webllm",
+        modelIdentifier: "Llama-3.2-1B-Instruct-q4f32_1-MLC",
+        contextLength: 4096,
+        temperature: 0.7,
+        topP: 0.9,
+        maxTokens: 2048,
+        compatibility: "supported"
+      });
+      this.saveModelProfile({
+        id: "profile_2",
+        name: "Llama 3.2 1B (Ollama)",
         runtimeType: "ollama",
         modelIdentifier: "llama3.2:1b",
         contextLength: 4096,
