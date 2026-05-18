@@ -119,9 +119,11 @@ export default function Landing() {
           <div className="relative z-10 max-w-2xl flex flex-col items-center">
             <h2 className="text-5xl md:text-7xl font-black tracking-tighter mb-6">READY TO RUN?</h2>
             <p className="text-xl text-muted-foreground mb-12">
-              Install the app now and start generating. No accounts required.
+              Grab the desktop build for native speed, or fire it up in your browser. No accounts, no keys, no servers.
             </p>
-            <InstallCTA />
+            <div className="flex justify-center">
+              <InstallCTA />
+            </div>
           </div>
         </section>
       </main>

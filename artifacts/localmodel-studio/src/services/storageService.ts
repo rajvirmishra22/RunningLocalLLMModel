@@ -50,7 +50,10 @@ const VALID_WEBLLM_IDS = new Set([
   "Llama-3.1-8B-Instruct-q4f32_1-MLC",
 ]);
 
-const LEGACY_OLLAMA_TO_WEBLLM: Record<string, { id: string; label: string }> = {
+// Maps legacy short-form model identifiers from earlier versions of the app
+// to their current WebLLM-compatible IDs. Pure backward-compatibility cleanup —
+// new profiles always use the WebLLM IDs directly.
+const LEGACY_ID_TO_WEBLLM: Record<string, { id: string; label: string }> = {
   "llama3.2:1b": { id: "Llama-3.2-1B-Instruct-q4f32_1-MLC", label: "Llama 3.2 1B" },
   "llama3.2:3b": { id: "Llama-3.2-3B-Instruct-q4f32_1-MLC", label: "Llama 3.2 3B" },
   "qwen2.5:1.5b": { id: "Qwen2.5-1.5B-Instruct-q4f32_1-MLC", label: "Qwen 2.5 1.5B" },
@@ -98,8 +101,8 @@ function migrateProfiles(raw: unknown): ModelProfile[] {
       continue;
     }
 
-    // Legacy Ollama profile we know how to map
-    const mapped = LEGACY_OLLAMA_TO_WEBLLM[p.modelIdentifier];
+    // Legacy short-form identifier we know how to map to a WebLLM ID
+    const mapped = LEGACY_ID_TO_WEBLLM[p.modelIdentifier];
     if (mapped && !seenIdentifiers.has(mapped.id)) {
       seenIdentifiers.add(mapped.id);
       migrated.push({
@@ -114,7 +117,7 @@ function migrateProfiles(raw: unknown): ModelProfile[] {
         compatibility: "supported",
       });
     }
-    // Otherwise: drop the legacy profile (llama.cpp / unknown ollama / GGUF paths)
+    // Otherwise: drop the legacy profile (unknown runtime or GGUF path).
   }
 
   return migrated;
