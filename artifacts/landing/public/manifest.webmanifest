@@ -1,0 +1,32 @@
+{
+  "name": "LocalModel Studio",
+  "short_name": "LocalModel",
+  "description": "Chat with open-source language models running fully in your browser. No installs, no servers, no cloud.",
+  "start_url": "/app/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0b0f1a",
+  "theme_color": "#0b0f1a",
+  "categories": ["productivity", "developer", "utilities"],
+  "icons": [
+    {
+      "src": "/pwa-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/pwa-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/pwa-512-maskable.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}

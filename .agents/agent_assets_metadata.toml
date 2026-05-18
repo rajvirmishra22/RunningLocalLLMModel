@@ -1,0 +1,8 @@
+uploads = []
+outputs = []
+
+[[generated]]
+id = "IFOj_fT0sdLOT4xm1nohc"
+uri = "file://artifacts/landing/public/hero-app-mockup.png"
+type = "image"
+title = "Dark glowing chat app UI"

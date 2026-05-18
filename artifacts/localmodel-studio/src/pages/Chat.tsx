@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { Link } from "wouter";
 import { Send, Square, Trash2, Plus, MessageSquare, Clock, Zap, Download, Loader2, AlertCircle, Globe } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -281,7 +282,7 @@ export default function Chat() {
           {profiles.length === 0 ? (
             <p className="text-xs text-muted-foreground">
               No models configured.{" "}
-              <a href="/models" className="underline text-primary">Add a model</a> to get started.
+              <Link href="/models" className="underline text-primary">Add a model</Link> to get started.
             </p>
           ) : (
             <Select value={selectedProfileId} onValueChange={setSelectedProfileId}>
