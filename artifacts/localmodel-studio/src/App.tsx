@@ -7,6 +7,7 @@ import Layout from "@/components/Layout";
 import Dashboard from "@/pages/Dashboard";
 import Chat from "@/pages/Chat";
 import Models from "@/pages/Models";
+import Tuning from "@/pages/Tuning";
 import Settings from "@/pages/Settings";
 import NotFound from "@/pages/not-found";
 import { storageService } from "@/services/storageService";
@@ -20,6 +21,7 @@ function AppRoutes() {
         <Route path="/" component={Dashboard} />
         <Route path="/chat" component={Chat} />
         <Route path="/models" component={Models} />
+        <Route path="/tuning" component={Tuning} />
         <Route path="/settings" component={Settings} />
         <Route component={NotFound} />
       </Switch>

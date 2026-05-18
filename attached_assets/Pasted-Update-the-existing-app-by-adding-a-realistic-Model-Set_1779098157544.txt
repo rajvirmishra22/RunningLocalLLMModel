@@ -1,0 +1,372 @@
+Update the existing app by adding a realistic “Model Settings” page.
+
+Important:
+Only implement settings that the app can actually change. Do not pretend the app can change a model from Q4 to Q8 directly. Main model quantization is not a live setting. Changing from Q4 to Q8 usually requires loading a different GGUF model file, Ollama tag, or downloaded model variant.
+
+The app already uses WebGPU and llama.cpp at a high level. Build this feature into the existing app instead of rebuilding the architecture.
+
+Main goal:
+Create a Model Settings page where users can adjust runtime model settings, see which settings are actually changeable, and use a one-click optimizer that recommends the best balance between quality, speed, and memory usage.
+
+Add a clear capability table to the Model Settings page:
+
+Setting | Can be changed without another model download?
+Temperature | Yes
+Top-p / Top-k | Yes
+Context length | Usually yes, within model/backend limits
+GPU layers / offloading | Runtime/config dependent
+FlashAttention | Yes, if the environment/backend supports it
+KV cache quantization | Yes, but may require model reload; global in Ollama if Ollama is used
+Main model quantization, like Q4 → Q8 | No, usually requires a different model file/tag
+
+The UI should separate settings into three groups:
+
+1. Live generation settings
+These can usually change immediately without reloading the model:
+- Temperature
+- Top-p
+- Top-k
+- Repeat penalty if already supported
+- Max output tokens if already supported
+
+Add tooltips:
+Temperature:
+“Controls randomness. Lower values are more focused; higher values are more creative.”
+
+Top-p:
+“Limits token choices to the most likely group of tokens.”
+
+Top-k:
+“Limits token choices to the top K most likely tokens.”
+
+These should update the generation config directly.
+
+2. Runtime/model-load settings
+These do not require a different model file, but may require reloading or restarting the model backend:
+- Context length
+- FlashAttention
+- KV cache precision
+- GPU offload / GPU layers
+- Batch size if supported
+- Backend selection if supported
+
+For each of these, show whether the setting requires:
+- Applies immediately
+- Requires model reload
+- Backend dependent
+- Unsupported on this device
+
+Context Length:
+Options:
+- 2048
+- 4096
+- 8192
+- 16384
+- 32768
+- Custom
+
+Rules:
+- Do not allow context length above the model/backend maximum if known.
+- If the max is unknown, allow the setting but show a warning.
+- Changing context length should mark the model as needing reload if that is required by the backend.
+
+Tooltip:
+“Controls how much text the model can remember at once. Longer context uses more memory.”
+
+FlashAttention:
+Options:
+- Auto
+- On
+- Off
+
+Rules:
+- Default should be Auto.
+- Do not force On if support is unknown.
+- If FlashAttention is unsupported, disable the On option and explain why.
+- If support cannot be detected, allow Auto but show a warning that the backend will decide.
+
+Tooltip:
+“Uses a faster attention algorithm when supported. It usually improves speed and memory usage without reducing model quality.”
+
+KV Cache Precision:
+Options:
+- f16 / highest quality
+- q8_0 / balanced memory saving
+- q4_0 / low memory
+
+Rules:
+- Changing KV cache precision may require model reload.
+- If the backend is Ollama, show a warning that KV cache quantization may be global or backend-level rather than per-model.
+- Do not show this setting as available if the current backend does not support it.
+
+Tooltip:
+“Controls how precisely the model stores conversation context. Lower precision saves memory, especially for long chats.”
+
+GPU Offload:
+Options:
+- Auto
+- CPU only
+- Partial GPU
+- Full GPU if possible
+
+Rules:
+- Only show detailed GPU-layer controls if the backend supports them.
+- For llama.cpp native backends, map this to GPU layer/offload settings.
+- For WebGPU, show this as Auto/WebGPU-managed unless the app has real control over GPU layers.
+- If the browser/WebGPU backend does not expose this control, disable manual GPU-layer selection and explain that offloading is managed automatically.
+
+Tooltip:
+“Controls how much work runs on the GPU. More GPU usage is usually faster but uses more VRAM.”
+
+Batch Size:
+Options:
+- Auto
+- 512
+- 1024
+- 2048
+- 4096
+
+Rules:
+- Only show if the backend supports changing batch size.
+- Larger batch size can improve prompt processing speed but uses more memory.
+- Changing this may require model reload.
+
+3. Model variant / quantization selection
+This is NOT a live setting.
+
+Create a section called:
+“Model Variant / Quantization”
+
+This section should show:
+- Current loaded model name
+- Current quantization if detectable, such as Q8_0, Q6_K, Q5_K_M, Q4_K_M, Q3_K_M, Q2_K
+- Available local model variants
+- Whether switching requires loading a different model file/tag
+
+Important rules:
+- Do not allow the app to simply “change Q4 to Q8” on the same file.
+- If the user wants Q8 but only Q4 exists locally, show:
+  “Q8 version not found locally. Import or download a Q8 model variant to use this setting.”
+- If multiple variants exist locally, allow the user to switch between them.
+- Switching model quantization should unload/reload the model using the selected file/tag.
+- If model download/import exists in the app, provide a button like “Find compatible model variant” or “Import model variant.”
+- If not, only show the local variants that already exist.
+
+Tooltip:
+“Main model quantization is baked into the model file. To switch from Q4 to Q8, the app must load a different model file or tag.”
+
+Add a Hardware Summary card.
+
+Detect and show as much as possible:
+- Browser
+- Operating system if available
+- WebGPU support
+- WebGPU adapter name if available
+- GPU vendor if detectable
+- Approximate device memory if available
+- CPU thread count if available
+- Whether exact VRAM is available
+
+Important:
+Browsers often do not expose full PC specs or exact VRAM for privacy reasons. Do not invent exact VRAM. If unavailable, show “Unknown.”
+
+Use:
+- navigator.gpu.requestAdapter() for WebGPU adapter info
+- navigator.deviceMemory if available
+- navigator.hardwareConcurrency for CPU thread estimate
+
+If the app has a local desktop/helper backend, use that for more detailed specs. But do not rely on Replit server specs as the user’s computer specs.
+
+Add an “Optimize Model” feature.
+
+Button label:
+“Optimize Model”
+
+When clicked:
+1. Detect available hardware info.
+2. Detect current model and available local model variants.
+3. Detect which settings are actually supported by the current backend.
+4. Recommend the best settings for quality, speed, and memory.
+5. Show a recommendation card.
+6. Let the user apply all supported recommendations with one click.
+
+Add a button:
+“Apply Recommended Settings”
+
+When applying:
+1. Save current settings as backup.
+2. Apply live settings immediately.
+3. Apply runtime settings and reload the model if necessary.
+4. If a recommended model quantization requires a different local model file, only switch if that file exists.
+5. If a required file does not exist, do not apply that part of the recommendation.
+6. If loading fails, roll back to the previous settings.
+7. Show a clear error message.
+
+Recommendation logic:
+
+Create a function:
+
+recommendSettings({
+  hardware,
+  currentModel,
+  availableModelVariants,
+  currentSettings,
+  backendCapabilities,
+  profile
+})
+
+It should return:
+
+{
+  profile: "Balanced",
+  canApplyFully: true,
+  recommendedSettings: {
+    temperature: 0.7,
+    topP: 0.9,
+    topK: 40,
+    contextLength: 8192,
+    flashAttention: "Auto",
+    kvCache: "q8_0",
+    gpuOffload: "Auto",
+    batchSize: 1024
+  },
+  recommendedModelVariant: {
+    quantization: "Q4_K_M",
+    availableLocally: true,
+    requiresDifferentModelFile: true,
+    modelPath: "models/example-q4_k_m.gguf"
+  },
+  unavailableRecommendations: [],
+  estimatedMemory: {
+    modelGB: 4.8,
+    kvCacheGB: 1.2,
+    overheadGB: 1.0,
+    totalGB: 7.0,
+    confidence: "medium"
+  },
+  reasoning: [
+    "Q4_K_M was selected because it provides a strong balance between quality and memory usage.",
+    "FlashAttention is set to Auto because support depends on the backend and device.",
+    "KV cache q8_0 reduces memory use while preserving better quality than q4_0.",
+    "Context length 8192 was selected as a balanced setting."
+  ],
+  warnings: [
+    "Exact VRAM could not be detected in the browser.",
+    "Main model quantization cannot be changed directly; it requires loading a matching model variant."
+  ]
+}
+
+Optimization profiles:
+
+Balanced:
+- Temperature: 0.7
+- Top-p: 0.9
+- Top-k: 40
+- Prefer Q4_K_M or Q5_K_M model variant if available
+- FlashAttention: Auto
+- KV cache: q8_0
+- Context: 4096 or 8192
+- Batch size: 512 or 1024
+
+Max Quality:
+- Prefer Q8, Q6, or Q5 model variant if available and likely to fit
+- KV cache: f16 if memory allows
+- FlashAttention: Auto
+- Context: 4096 or 8192
+- Do not lower quantization unless needed
+
+Low Memory:
+- Prefer Q4, Q3 only if needed
+- KV cache: q8_0 first, q4_0 only if memory is very limited
+- Context: 2048 or 4096
+- Batch size: 512
+- FlashAttention: Auto
+
+Fastest:
+- Prefer a model variant that fits comfortably in memory
+- FlashAttention: Auto or On only if definitely supported
+- Context: 4096 unless user needs more
+- Batch size: 1024 if safe
+
+Long Context:
+- Prefer Q4_K_M or Q5_K_M
+- KV cache: q8_0, q4_0 only if needed
+- Context: 16384 or 32768 if memory allows
+- Reduce batch size before reducing model quality
+
+Quality priority:
+1. Use the best available model variant that fits: Q8 > Q6 > Q5 > Q4 > Q3 > Q2.
+2. Do not recommend Q2 unless absolutely necessary.
+3. Prefer reducing batch size before lowering model quantization.
+4. Prefer q8_0 KV cache before q4_0.
+5. Use f16 KV cache when memory allows.
+6. Do not recommend switching quantization unless the matching model variant exists locally or the app supports downloading/importing it.
+
+Backend capability detection:
+
+Create a backendCapabilities object:
+
+{
+  supportsTemperature: true,
+  supportsTopP: true,
+  supportsTopK: true,
+  supportsContextLengthChange: true,
+  contextLengthRequiresReload: true,
+  supportsFlashAttention: "unknown" | true | false,
+  supportsKVCacheQuantization: true | false,
+  kvCacheQuantizationScope: "per-model" | "global" | "unknown",
+  supportsGPUOffloadControl: true | false,
+  supportsBatchSizeControl: true | false,
+  supportsModelVariantSwitching: true
+}
+
+Use this object to enable, disable, or warn on UI controls.
+
+UI requirements:
+- Clean settings page with cards.
+- Each setting must show one of:
+  - Applies immediately
+  - Requires reload
+  - Requires different model file
+  - Unsupported
+  - Unknown support
+- Add tooltips for all technical settings.
+- Add a memory estimate bar:
+  - Green: safe
+  - Yellow: close to limit
+  - Red: likely too large
+- Add “Revert to Previous Settings.”
+- Add “Test Settings” if the app can run a short benchmark.
+
+Do not:
+- Do not pretend Q4 → Q8 is a simple setting.
+- Do not invent exact VRAM.
+- Do not force FlashAttention On when support is unknown.
+- Do not show unsupported settings as active.
+- Do not apply settings that the backend cannot actually use.
+- Do not crash if hardware detection is limited.
+
+Files/components to create or update:
+- ModelSettingsPage
+- HardwareSummaryCard
+- RuntimeSettingsForm
+- GenerationSettingsForm
+- ModelVariantSelector
+- RecommendationCard
+- MemoryEstimateBar
+- optimizationEngine.ts
+- hardwareDetector.ts
+- backendCapabilities.ts
+- modelScanner.ts
+- modelSettingsStore.ts
+
+Acceptance criteria:
+- Users can change live generation settings like temperature, top-p, and top-k.
+- Users can change supported runtime settings like context length, FlashAttention, KV cache precision, and batch size.
+- The UI clearly shows which settings require reload.
+- The UI clearly shows that main model quantization requires a different model file/tag.
+- The optimizer only recommends settings that are realistically supported.
+- The optimizer does not apply a quantization switch unless the matching model variant exists locally.
+- The app explains why each recommendation was made.
+- Settings persist after refresh/restart.
+- Failed settings roll back safely.

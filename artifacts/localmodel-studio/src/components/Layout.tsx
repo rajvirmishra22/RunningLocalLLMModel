@@ -1,11 +1,12 @@
 import { Link, useLocation } from "wouter";
-import { LayoutDashboard, MessageSquare, Cpu, Settings, Shield } from "lucide-react";
+import { LayoutDashboard, MessageSquare, Cpu, Settings, Shield, Sliders } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const navItems = [
   { path: "/", icon: LayoutDashboard, label: "Dashboard" },
   { path: "/chat", icon: MessageSquare, label: "Chat" },
   { path: "/models", icon: Cpu, label: "Models" },
+  { path: "/tuning", icon: Sliders, label: "Tuning" },
   { path: "/settings", icon: Settings, label: "Settings" },
 ];
 
