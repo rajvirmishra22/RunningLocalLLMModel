@@ -86,9 +86,9 @@ export default function Dashboard() {
           <div className="flex items-center gap-3 p-3.5 rounded-lg bg-green-500/10 border border-green-500/20">
             <Globe className="w-4 h-4 text-green-500 flex-shrink-0" />
             <div>
-              <p className="text-sm font-medium text-green-500">WebGPU detected — no install needed</p>
+              <p className="text-sm font-medium text-green-500">WebGPU detected — runs offline after first download</p>
               <p className="text-xs text-muted-foreground mt-0.5">
-                Your browser supports in-browser inference. Select a "Browser" model in Chat to run AI without installing anything.
+                Models download once over the internet, then run fully offline — no Ollama, no installs, no cloud.
               </p>
             </div>
           </div>

@@ -466,7 +466,7 @@ function WebLLMLoadBanner({
               <div>
                 <p className="text-xs font-medium">{modelName} runs entirely in your browser</p>
                 <p className="text-[11px] text-muted-foreground">
-                  No Ollama needed. Model downloads once (~0.7–5 GB) and is cached locally.
+                  Downloads once (~0.7–5 GB) via internet, then runs fully offline. No Ollama needed.
                 </p>
               </div>
             </div>
