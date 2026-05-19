@@ -59,7 +59,7 @@ Until that's set, the landing page shows "WINDOWS .EXE — COMING SOON" as a dis
 
 - **Two engines, one product**: the desktop build uses native llama.cpp for full-speed inference using the user's full GPU/CPU; the in-browser build uses WebGPU + WebLLM as a friction-free fallback. Same UX, different runtime.
 - **Bundled starter model**: installer size is dominated by the model (~400 MB out of ~440 MB). Bundling means the app works zero-config after install — no second download, no setup wizard.
-- **No backend, ever**: both builds are fully local. No API server, no telemetry, no accounts.
+- **Local-first, cloud-optional**: both builds run open-source models on the user's own hardware out of the box, with no backend, account, or telemetry. As of the BYO-API-key feature, users *can* paste their own OpenAI or Anthropic API key in Settings (web) or "Cloud Keys" (desktop) and route specific messages through those providers — strictly opt-in, per-message, with a clear "Sending to X" badge. The consumer ChatGPT Plus / Claude Pro subscriptions are not usable here; only developer API keys work. Keys live in localStorage.
 - **Desktop project sits outside the pnpm workspace** so its npm + Rust toolchain doesn't conflict with workspace tooling, and Replit's typecheck/workflows ignore it.
 
 ## Product

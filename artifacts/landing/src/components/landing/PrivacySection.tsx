@@ -31,23 +31,24 @@ export function PrivacySection() {
         </div>
         <div className="order-1 lg:order-2">
           <h2 className="text-4xl md:text-6xl font-black tracking-tighter mb-6 text-white">
-            WHAT HAPPENS LOCAL, <br/>STAYS LOCAL.
+            LOCAL BY DEFAULT. <br/>CLOUD IF YOU WANT.
           </h2>
           <p className="text-xl text-muted-foreground mb-6">
-            There is no backend. There is no API key. There is no database. Your conversations are processed locally by your GPU and stored in your browser's IndexedDB. 
+            Run open models entirely on your own GPU — no backend, no account, no telemetry. Or bring your own
+            OpenAI / Anthropic key for cloud models, opt-in and per-message. You always know where your prompt is going.
           </p>
           <ul className="space-y-4 text-muted-foreground font-mono text-sm">
             <li className="flex items-center gap-3">
               <div className="w-1.5 h-1.5 bg-primary rounded-full" />
-              <span>Offline-first architecture</span>
+              <span>Local inference is the default — no key, no signup</span>
             </li>
             <li className="flex items-center gap-3">
               <div className="w-1.5 h-1.5 bg-primary rounded-full" />
-              <span>IndexedDB storage only</span>
+              <span>BYO API key for OpenAI / Anthropic — strictly opt-in</span>
             </li>
             <li className="flex items-center gap-3">
               <div className="w-1.5 h-1.5 bg-primary rounded-full" />
-              <span>Zero telemetry or analytics</span>
+              <span>Zero telemetry or analytics, ever</span>
             </li>
           </ul>
         </div>

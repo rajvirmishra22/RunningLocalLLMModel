@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { Link } from "wouter";
-import { Send, Square, Trash2, Plus, MessageSquare, Clock, Zap, Download, Loader2, AlertCircle, Globe, Sliders } from "lucide-react";
+import { Send, Square, Trash2, Plus, MessageSquare, Clock, Zap, Download, Loader2, AlertCircle, Globe, Sliders, Cloud, CloudOff } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -15,6 +15,15 @@ import {
 import { cn } from "@/lib/utils";
 import { storageService, Conversation, Message, ModelProfile, DEFAULT_GENERATION } from "@/services/storageService";
 import { webllmService, InitProgress } from "@/services/webllmService";
+import {
+  loadCloudConfig,
+  streamCloudChat,
+  hasKey,
+  type CloudProvider,
+  type CloudProviderConfig,
+} from "@/services/cloudProviders";
+
+type Provider = "local" | CloudProvider;
 
 type LoadState =
   | { type: "idle" }
@@ -31,12 +40,33 @@ export default function Chat() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [streamingContent, setStreamingContent] = useState("");
   const [webllmLoad, setWebllmLoad] = useState<LoadState>({ type: "idle" });
+  const [provider, setProvider] = useState<Provider>("local");
+  const [cloudCfg, setCloudCfg] = useState<CloudProviderConfig>(() => loadCloudConfig());
   const abortRef = useRef<AbortController | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   const activeConv = conversations.find((c) => c.id === activeConvId) ?? null;
   const selectedProfile = profiles.find((p) => p.id === selectedProfileId);
   const webllmReady = !!selectedProfile && webllmService.getLoadedModelId() === selectedProfile.modelIdentifier;
+
+  // Reload cloud config on focus so newly-saved keys from Settings show up
+  // here without a page reload.
+  useEffect(() => {
+    const refresh = () => setCloudCfg(loadCloudConfig());
+    window.addEventListener("focus", refresh);
+    return () => window.removeEventListener("focus", refresh);
+  }, []);
+
+  const cloudReady = provider !== "local" && hasKey(cloudCfg, provider);
+  const chatReady = provider === "local" ? webllmReady : cloudReady;
+  const activeCloudModel =
+    provider === "openai" ? cloudCfg.openaiModel : provider === "anthropic" ? cloudCfg.anthropicModel : "";
+  const providerLabel =
+    provider === "local"
+      ? selectedProfile?.name ?? "Local"
+      : provider === "openai"
+        ? `OpenAI · ${cloudCfg.openaiModel}`
+        : `Anthropic · ${cloudCfg.anthropicModel}`;
 
   const loadData = () => {
     const convs = storageService.getConversations();
@@ -104,15 +134,24 @@ export default function Chat() {
   };
 
   const sendMessage = async () => {
-    if (!input.trim() || isGenerating || !selectedProfile) return;
-    if (!webllmReady) return;
+    if (!input.trim() || isGenerating) return;
+    if (provider === "local" && (!selectedProfile || !webllmReady)) return;
+    if (provider !== "local" && !cloudReady) return;
+
+    // The conversation's `modelId` is metadata only — for local runs it's the
+    // selected profile id, for cloud runs we synthesize one like "openai:gpt-4o"
+    // so conversation provenance stays accurate.
+    const convModelId =
+      provider === "local"
+        ? selectedProfileId
+        : `${provider}:${provider === "openai" ? cloudCfg.openaiModel : cloudCfg.anthropicModel}`;
 
     let conv = activeConv;
     if (!conv) {
       conv = {
         id: `conv_${Date.now()}`,
         title: input.slice(0, 40) + (input.length > 40 ? "..." : ""),
-        modelId: selectedProfileId,
+        modelId: convModelId,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
         messages: [],
@@ -129,7 +168,7 @@ export default function Chat() {
     const updatedConv: Conversation = {
       ...conv,
       title: conv.messages.length === 0 ? input.slice(0, 40) + (input.length > 40 ? "..." : "") : conv.title,
-      modelId: selectedProfileId,
+      modelId: convModelId,
       updatedAt: new Date().toISOString(),
       messages: [...conv.messages, userMsg],
     };
@@ -157,6 +196,13 @@ export default function Chat() {
     };
 
     const onDone = (stats: { tokensPerSec: number; totalTimeMs: number; modelUsed: string; runtimeUsed: string }) => {
+      // Avoid persisting empty assistant turns — they pollute history and
+      // confuse the next round-trip to the provider.
+      if (!fullContent.trim()) {
+        setStreamingContent("");
+        setIsGenerating(false);
+        return;
+      }
       const assistantMsg: Message = {
         id: `msg_${Date.now()}_a`,
         role: "assistant",
@@ -193,21 +239,63 @@ export default function Chat() {
       setIsGenerating(false);
     };
 
-    // Honour the profile's `useCustomGeneration` toggle: when off, we ignore
-    // the per-profile knobs and use the shared defaults. This lets casual
-    // users chat without ever touching temperature/top-p/max-tokens.
-    const effectiveGen = selectedProfile.useCustomGeneration
-      ? { temperature: selectedProfile.temperature, maxTokens: selectedProfile.maxTokens, topP: selectedProfile.topP }
-      : { temperature: DEFAULT_GENERATION.temperature, maxTokens: DEFAULT_GENERATION.maxTokens, topP: DEFAULT_GENERATION.topP };
+    if (provider === "local" && selectedProfile) {
+      // Honour the profile's `useCustomGeneration` toggle: when off, we ignore
+      // the per-profile knobs and use the shared defaults. This lets casual
+      // users chat without ever touching temperature/top-p/max-tokens.
+      const effectiveGen = selectedProfile.useCustomGeneration
+        ? { temperature: selectedProfile.temperature, maxTokens: selectedProfile.maxTokens, topP: selectedProfile.topP }
+        : { temperature: DEFAULT_GENERATION.temperature, maxTokens: DEFAULT_GENERATION.maxTokens, topP: DEFAULT_GENERATION.topP };
 
-    await webllmService.streamChat(
-      selectedProfile.modelIdentifier,
+      await webllmService.streamChat(
+        selectedProfile.modelIdentifier,
+        messagesForLLM,
+        effectiveGen,
+        onToken,
+        (stats) => onDone(stats),
+        onError,
+        controller
+      );
+      return;
+    }
+
+    // Cloud path. We track wall-clock time and approximate tok/s by character
+    // count / 4 (rough English ratio) since the provider doesn't tell us the
+    // exact token count mid-stream.
+    const startedAt = performance.now();
+    const cloudProvider: CloudProvider = provider === "openai" ? "openai" : "anthropic";
+    const cloudModel = cloudProvider === "openai" ? cloudCfg.openaiModel : cloudCfg.anthropicModel;
+    const cloudKey = cloudProvider === "openai" ? cloudCfg.openaiKey : cloudCfg.anthropicKey;
+    const finishCloud = (aborted: boolean) => {
+      const totalTimeMs = performance.now() - startedAt;
+      const approxTokens = Math.max(1, Math.round(fullContent.length / 4));
+      // Treat abort with no content as a no-op; abort with content as a
+      // truncated reply so the user keeps what already streamed.
+      if (aborted && !fullContent.trim()) {
+        setStreamingContent("");
+        setIsGenerating(false);
+        return;
+      }
+      onDone({
+        tokensPerSec: approxTokens / (totalTimeMs / 1000),
+        totalTimeMs,
+        modelUsed: aborted ? `${cloudModel} (stopped)` : cloudModel,
+        runtimeUsed: cloudProvider === "openai" ? "OpenAI" : "Anthropic",
+      });
+    };
+
+    await streamCloudChat(
+      cloudProvider,
+      cloudModel,
       messagesForLLM,
-      effectiveGen,
-      onToken,
-      onDone,
-      onError,
-      controller
+      cloudKey,
+      {
+        onToken,
+        onDone: () => finishCloud(false),
+        onAbort: () => finishCloud(true),
+        onError,
+      },
+      controller.signal,
     );
   };
 
@@ -224,7 +312,10 @@ export default function Chat() {
     }
   };
 
-  const canSend = input.trim().length > 0 && !isGenerating && profiles.length > 0 && webllmReady;
+  const canSend =
+    input.trim().length > 0 &&
+    !isGenerating &&
+    (provider === "local" ? profiles.length > 0 && webllmReady : cloudReady);
 
   return (
     <div className="flex h-full">
@@ -286,33 +377,88 @@ export default function Chat() {
       <div className="flex-1 flex flex-col min-w-0">
         {/* Top bar */}
         <div className="flex items-center gap-3 px-4 h-12 border-b border-border flex-shrink-0">
-          {profiles.length === 0 ? (
-            <p className="text-xs text-muted-foreground">
-              No models configured.{" "}
-              <Link href="/models" className="underline text-primary">Add a model</Link> to get started.
-            </p>
+          <Select value={provider} onValueChange={(v) => setProvider(v as Provider)}>
+            <SelectTrigger className="h-7 w-36 text-xs border-border" data-testid="select-provider">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="local" className="text-xs">
+                <span className="flex items-center gap-2">
+                  <Globe className="w-3 h-3 text-green-500" />
+                  Local
+                </span>
+              </SelectItem>
+              <SelectItem value="openai" className="text-xs" disabled={!hasKey(cloudCfg, "openai")}>
+                <span className="flex items-center gap-2">
+                  <Cloud className="w-3 h-3 text-blue-400" />
+                  OpenAI {!hasKey(cloudCfg, "openai") && "(add key)"}
+                </span>
+              </SelectItem>
+              <SelectItem value="anthropic" className="text-xs" disabled={!hasKey(cloudCfg, "anthropic")}>
+                <span className="flex items-center gap-2">
+                  <Cloud className="w-3 h-3 text-orange-400" />
+                  Anthropic {!hasKey(cloudCfg, "anthropic") && "(add key)"}
+                </span>
+              </SelectItem>
+            </SelectContent>
+          </Select>
+
+          {provider === "local" ? (
+            profiles.length === 0 ? (
+              <p className="text-xs text-muted-foreground">
+                No models configured.{" "}
+                <Link href="/models" className="underline text-primary">Add a model</Link> to get started.
+              </p>
+            ) : (
+              <Select value={selectedProfileId} onValueChange={setSelectedProfileId}>
+                <SelectTrigger className="h-7 w-52 text-xs border-border" data-testid="select-model">
+                  <SelectValue placeholder="Select model" />
+                </SelectTrigger>
+                <SelectContent>
+                  {profiles.map((p) => (
+                    <SelectItem key={p.id} value={p.id} className="text-xs">
+                      <span className="flex items-center gap-2">
+                        <Globe className="w-3 h-3 text-green-500" />
+                        {p.name}
+                      </span>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )
           ) : (
-            <Select value={selectedProfileId} onValueChange={setSelectedProfileId}>
-              <SelectTrigger className="h-7 w-52 text-xs border-border" data-testid="select-model">
-                <SelectValue placeholder="Select model" />
-              </SelectTrigger>
-              <SelectContent>
-                {profiles.map((p) => (
-                  <SelectItem key={p.id} value={p.id} className="text-xs">
-                    <span className="flex items-center gap-2">
-                      <Globe className="w-3 h-3 text-green-500" />
-                      {p.name}
-                    </span>
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <span className="text-xs font-mono text-muted-foreground" data-testid="active-cloud-model">
+              {activeCloudModel}
+            </span>
           )}
 
-          {selectedProfile && (
+          {provider === "local" && selectedProfile && (
             <span className="text-[10px] px-2 py-0.5 rounded-full bg-green-500/10 text-green-500 border border-green-500/20 font-medium">
               In-Browser
             </span>
+          )}
+          {provider === "openai" && (
+            <span
+              data-testid="badge-cloud-openai"
+              className="text-[10px] px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-400 border border-blue-500/20 font-medium flex items-center gap-1"
+            >
+              <Cloud className="w-2.5 h-2.5" />
+              Sending to OpenAI
+            </span>
+          )}
+          {provider === "anthropic" && (
+            <span
+              data-testid="badge-cloud-anthropic"
+              className="text-[10px] px-2 py-0.5 rounded-full bg-orange-500/10 text-orange-400 border border-orange-500/20 font-medium flex items-center gap-1"
+            >
+              <Cloud className="w-2.5 h-2.5" />
+              Sending to Anthropic
+            </span>
+          )}
+          {provider !== "local" && !cloudReady && (
+            <Link href="/settings" className="text-[10px] underline text-muted-foreground hover:text-foreground">
+              Add API key →
+            </Link>
           )}
 
           <Link href="/tuning" className="ml-auto">
@@ -342,8 +488,8 @@ export default function Chat() {
           )}
         </div>
 
-        {/* WebLLM load banner */}
-        {selectedProfile && webllmLoad.type !== "ready" && (
+        {/* WebLLM load banner — only when local provider is active. */}
+        {provider === "local" && selectedProfile && webllmLoad.type !== "ready" && (
           <WebLLMLoadBanner
             state={webllmLoad}
             modelName={selectedProfile.name}
@@ -359,14 +505,27 @@ export default function Chat() {
                 <MessageSquare className="w-10 h-10 text-muted-foreground/30 mb-3" />
                 <p className="text-sm font-medium text-muted-foreground">Start a conversation</p>
                 <p className="text-xs text-muted-foreground/60 mt-1">
-                  {selectedProfile
-                    ? `Using ${selectedProfile.name}`
-                    : "Select a model above"}
+                  {provider === "local"
+                    ? selectedProfile
+                      ? `Using ${selectedProfile.name}`
+                      : "Select a model above"
+                    : `Using ${providerLabel}`}
                 </p>
               </div>
             ) : (
               activeConv.messages.map((msg) => (
-                <MessageBubble key={msg.id} message={msg} modelName={selectedProfile?.name} />
+                <MessageBubble
+                  key={msg.id}
+                  message={msg}
+                  // Use the provider/model captured at write time when we
+                  // have it, so historical turns never get relabeled by a
+                  // later provider switch.
+                  modelName={
+                    msg.role === "assistant" && msg.stats
+                      ? `${msg.stats.runtimeUsed} · ${msg.stats.modelUsed}`
+                      : providerLabel
+                  }
+                />
               ))
             )}
 
@@ -376,7 +535,7 @@ export default function Chat() {
                   <div className="w-2 h-2 rounded-full bg-primary animate-pulse" />
                 </div>
                 <div className="flex-1 min-w-0">
-                  <p className="text-xs text-muted-foreground mb-1">{selectedProfile?.name ?? "Assistant"}</p>
+                  <p className="text-xs text-muted-foreground mb-1">{providerLabel}</p>
                   <div className="rounded-xl px-3.5 py-2.5 bg-muted max-w-[85%]">
                     <p className="text-sm text-foreground whitespace-pre-wrap leading-relaxed">
                       {streamingContent}
@@ -400,14 +559,16 @@ export default function Chat() {
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={handleKeyDown}
                 placeholder={
-                  webllmLoad.type !== "ready"
-                    ? "Load the model above before chatting..."
+                  !chatReady
+                    ? provider === "local"
+                      ? "Load the model above before chatting..."
+                      : `Add an ${provider === "openai" ? "OpenAI" : "Anthropic"} API key in Settings to chat.`
                     : "Type a message… (Enter to send, Shift+Enter for newline)"
                 }
                 className="flex-1 min-h-[40px] max-h-36 resize-none text-sm py-2.5 pr-2"
                 rows={1}
                 data-testid="input-chat-message"
-                disabled={isGenerating || webllmLoad.type !== "ready"}
+                disabled={isGenerating || !chatReady}
               />
               {isGenerating ? (
                 <Button
@@ -432,8 +593,18 @@ export default function Chat() {
                 </Button>
               )}
             </div>
-            <p className="text-[10px] text-muted-foreground mt-1.5 text-center">
-              All messages stay local. No data leaves your device.
+            <p className="text-[10px] text-muted-foreground mt-1.5 text-center flex items-center justify-center gap-1.5">
+              {provider === "local" ? (
+                <>
+                  <CloudOff className="w-2.5 h-2.5" />
+                  All messages stay local. No data leaves your device.
+                </>
+              ) : (
+                <>
+                  <Cloud className="w-2.5 h-2.5" />
+                  Messages are sent to {provider === "openai" ? "OpenAI" : "Anthropic"}. Billed to your account.
+                </>
+              )}
             </p>
           </div>
         </div>
