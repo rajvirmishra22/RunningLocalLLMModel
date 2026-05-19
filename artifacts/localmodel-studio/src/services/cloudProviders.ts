@@ -40,18 +40,62 @@ export const DEFAULT_CLOUD_CONFIG: CloudProviderConfig = {
   anthropicModel: "claude-3-5-sonnet-20241022",
 };
 
-/** Curated dropdown options. Users can also paste any custom model ID. */
+/**
+ * All model IDs that are publicly callable on each provider's standard chat API
+ * (OpenAI `/v1/chat/completions`, Anthropic `/v1/messages`). Users can still
+ * paste any custom ID — this list is just to save typing. Kept in approximate
+ * "newest / most useful first" order within each family.
+ */
 export const OPENAI_MODEL_PRESETS: Array<{ id: string; label: string; note: string }> = [
-  { id: "gpt-4o-mini", label: "GPT-4o mini", note: "Cheapest. Great for chat." },
-  { id: "gpt-4o", label: "GPT-4o", note: "Flagship multimodal model." },
-  { id: "o1-mini", label: "o1-mini", note: "Reasoning model. Slower, costlier." },
-  { id: "o1", label: "o1", note: "Top reasoning model. Pricey." },
+  // GPT-4.1 family
+  { id: "gpt-4.1", label: "GPT-4.1", note: "Latest flagship. 1M context." },
+  { id: "gpt-4.1-mini", label: "GPT-4.1 mini", note: "Cheaper 4.1. Still strong." },
+  { id: "gpt-4.1-nano", label: "GPT-4.1 nano", note: "Smallest 4.1. Very cheap." },
+  // o-series reasoning models
+  { id: "o4-mini", label: "o4-mini", note: "Reasoning. Cheap, fast." },
+  { id: "o3", label: "o3", note: "Top reasoning model." },
+  { id: "o3-mini", label: "o3-mini", note: "Reasoning. Mid-tier." },
+  { id: "o1", label: "o1", note: "Older flagship reasoning." },
+  { id: "o1-mini", label: "o1-mini", note: "Older small reasoning." },
+  { id: "o1-preview", label: "o1-preview", note: "Original preview." },
+  // GPT-4o family
+  { id: "chatgpt-4o-latest", label: "ChatGPT-4o latest", note: "Tracks ChatGPT's 4o." },
+  { id: "gpt-4o", label: "GPT-4o", note: "Multimodal flagship." },
+  { id: "gpt-4o-mini", label: "GPT-4o mini", note: "Cheap, fast, capable." },
+  { id: "gpt-4o-2024-11-20", label: "GPT-4o (2024-11-20)", note: "Pinned snapshot." },
+  { id: "gpt-4o-2024-08-06", label: "GPT-4o (2024-08-06)", note: "Pinned snapshot." },
+  { id: "gpt-4o-2024-05-13", label: "GPT-4o (2024-05-13)", note: "Original 4o snapshot." },
+  // GPT-4 turbo / classic
+  { id: "gpt-4-turbo", label: "GPT-4 Turbo", note: "Pre-4o flagship." },
+  { id: "gpt-4-turbo-2024-04-09", label: "GPT-4 Turbo (2024-04-09)", note: "Pinned snapshot." },
+  { id: "gpt-4", label: "GPT-4", note: "Original. 8k context." },
+  { id: "gpt-4-32k", label: "GPT-4 32k", note: "Original w/ 32k context." },
+  // GPT-3.5
+  { id: "gpt-3.5-turbo", label: "GPT-3.5 Turbo", note: "Legacy. Cheapest." },
+  { id: "gpt-3.5-turbo-16k", label: "GPT-3.5 Turbo 16k", note: "Legacy long-context." },
 ];
 
 export const ANTHROPIC_MODEL_PRESETS: Array<{ id: string; label: string; note: string }> = [
-  { id: "claude-3-5-haiku-20241022", label: "Claude 3.5 Haiku", note: "Cheapest. Fast." },
-  { id: "claude-3-5-sonnet-20241022", label: "Claude 3.5 Sonnet", note: "Balanced default." },
-  { id: "claude-3-opus-20240229", label: "Claude 3 Opus", note: "Older flagship. Costly." },
+  // Claude 4 family
+  { id: "claude-opus-4-5", label: "Claude Opus 4.5", note: "Latest flagship." },
+  { id: "claude-sonnet-4-5", label: "Claude Sonnet 4.5", note: "Latest balanced." },
+  { id: "claude-haiku-4-5", label: "Claude Haiku 4.5", note: "Latest cheap & fast." },
+  { id: "claude-opus-4-0", label: "Claude Opus 4", note: "Previous flagship." },
+  { id: "claude-sonnet-4-0", label: "Claude Sonnet 4", note: "Previous balanced." },
+  // Claude 3.7
+  { id: "claude-3-7-sonnet-latest", label: "Claude 3.7 Sonnet (latest)", note: "Tracks newest 3.7." },
+  { id: "claude-3-7-sonnet-20250219", label: "Claude 3.7 Sonnet (2025-02-19)", note: "Pinned." },
+  // Claude 3.5
+  { id: "claude-3-5-sonnet-latest", label: "Claude 3.5 Sonnet (latest)", note: "Tracks newest 3.5 Sonnet." },
+  { id: "claude-3-5-sonnet-20241022", label: "Claude 3.5 Sonnet (2024-10-22)", note: "Pinned." },
+  { id: "claude-3-5-sonnet-20240620", label: "Claude 3.5 Sonnet (2024-06-20)", note: "Original 3.5." },
+  { id: "claude-3-5-haiku-latest", label: "Claude 3.5 Haiku (latest)", note: "Tracks newest Haiku." },
+  { id: "claude-3-5-haiku-20241022", label: "Claude 3.5 Haiku (2024-10-22)", note: "Pinned. Cheap." },
+  // Claude 3
+  { id: "claude-3-opus-latest", label: "Claude 3 Opus (latest)", note: "Older top tier." },
+  { id: "claude-3-opus-20240229", label: "Claude 3 Opus (2024-02-29)", note: "Pinned." },
+  { id: "claude-3-sonnet-20240229", label: "Claude 3 Sonnet", note: "Legacy balanced." },
+  { id: "claude-3-haiku-20240307", label: "Claude 3 Haiku", note: "Legacy cheap." },
 ];
 
 const STORAGE_KEY = "lms_cloud_config";

@@ -31,17 +31,49 @@ export const DEFAULT_CLOUD_CONFIG: CloudProviderConfig = {
   anthropicModel: "claude-3-5-sonnet-20241022",
 };
 
+// Full set of model IDs publicly callable on each provider's standard chat API.
+// Users can still paste a custom ID; this list just saves typing.
 export const OPENAI_MODEL_PRESETS = [
+  { id: "gpt-4.1", label: "GPT-4.1 (latest flagship)" },
+  { id: "gpt-4.1-mini", label: "GPT-4.1 mini" },
+  { id: "gpt-4.1-nano", label: "GPT-4.1 nano (cheapest)" },
+  { id: "o4-mini", label: "o4-mini (reasoning, cheap)" },
+  { id: "o3", label: "o3 (top reasoning)" },
+  { id: "o3-mini", label: "o3-mini (reasoning)" },
+  { id: "o1", label: "o1 (older top reasoning)" },
+  { id: "o1-mini", label: "o1-mini" },
+  { id: "o1-preview", label: "o1-preview" },
+  { id: "chatgpt-4o-latest", label: "ChatGPT-4o latest" },
+  { id: "gpt-4o", label: "GPT-4o (multimodal flagship)" },
   { id: "gpt-4o-mini", label: "GPT-4o mini (cheap, fast)" },
-  { id: "gpt-4o", label: "GPT-4o (flagship)" },
-  { id: "o1-mini", label: "o1-mini (reasoning)" },
-  { id: "o1", label: "o1 (top reasoning)" },
+  { id: "gpt-4o-2024-11-20", label: "GPT-4o (2024-11-20)" },
+  { id: "gpt-4o-2024-08-06", label: "GPT-4o (2024-08-06)" },
+  { id: "gpt-4o-2024-05-13", label: "GPT-4o (2024-05-13)" },
+  { id: "gpt-4-turbo", label: "GPT-4 Turbo" },
+  { id: "gpt-4-turbo-2024-04-09", label: "GPT-4 Turbo (2024-04-09)" },
+  { id: "gpt-4", label: "GPT-4 (original)" },
+  { id: "gpt-4-32k", label: "GPT-4 32k" },
+  { id: "gpt-3.5-turbo", label: "GPT-3.5 Turbo (legacy)" },
+  { id: "gpt-3.5-turbo-16k", label: "GPT-3.5 Turbo 16k (legacy)" },
 ];
 
 export const ANTHROPIC_MODEL_PRESETS = [
-  { id: "claude-3-5-haiku-20241022", label: "Claude 3.5 Haiku (cheap, fast)" },
-  { id: "claude-3-5-sonnet-20241022", label: "Claude 3.5 Sonnet (balanced)" },
-  { id: "claude-3-opus-20240229", label: "Claude 3 Opus (older flagship)" },
+  { id: "claude-opus-4-5", label: "Claude Opus 4.5 (latest flagship)" },
+  { id: "claude-sonnet-4-5", label: "Claude Sonnet 4.5 (latest balanced)" },
+  { id: "claude-haiku-4-5", label: "Claude Haiku 4.5 (latest cheap)" },
+  { id: "claude-opus-4-0", label: "Claude Opus 4" },
+  { id: "claude-sonnet-4-0", label: "Claude Sonnet 4" },
+  { id: "claude-3-7-sonnet-latest", label: "Claude 3.7 Sonnet (latest)" },
+  { id: "claude-3-7-sonnet-20250219", label: "Claude 3.7 Sonnet (2025-02-19)" },
+  { id: "claude-3-5-sonnet-latest", label: "Claude 3.5 Sonnet (latest)" },
+  { id: "claude-3-5-sonnet-20241022", label: "Claude 3.5 Sonnet (2024-10-22)" },
+  { id: "claude-3-5-sonnet-20240620", label: "Claude 3.5 Sonnet (2024-06-20)" },
+  { id: "claude-3-5-haiku-latest", label: "Claude 3.5 Haiku (latest)" },
+  { id: "claude-3-5-haiku-20241022", label: "Claude 3.5 Haiku (2024-10-22)" },
+  { id: "claude-3-opus-latest", label: "Claude 3 Opus (latest)" },
+  { id: "claude-3-opus-20240229", label: "Claude 3 Opus (2024-02-29)" },
+  { id: "claude-3-sonnet-20240229", label: "Claude 3 Sonnet (legacy)" },
+  { id: "claude-3-haiku-20240307", label: "Claude 3 Haiku (legacy)" },
 ];
 
 const STORAGE_KEY = "lms_desktop_cloud_config";
