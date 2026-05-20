@@ -28,7 +28,7 @@ llama-cpp-2 = "=0.1.54"
 [features]
 default = []
 # Enable CUDA acceleration on NVIDIA GPUs (via llama.cpp's cuBLAS backend).
-# Off by default to keep the build portable.
+# Off by default to keep the build portable. 0.1.54 only exposes cublas/metal.
 cuda = ["llama-cpp-2/cublas"]
-# Enable Vulkan acceleration (works across AMD/NVIDIA/Intel).
-vulkan = ["llama-cpp-2/vulkan"]
+# Apple Metal acceleration. Only meaningful on macOS builds.
+metal = ["llama-cpp-2/metal"]
