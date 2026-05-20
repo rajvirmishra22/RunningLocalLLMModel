@@ -64,15 +64,12 @@ impl Engine {
             .new_context(&self.backend, ctx_params)
             .context("failed to create llama context")?;
 
-        // Chat template for Llama 3.2 Instruct. `AddBos::Always` below prepends
-        // <|begin_of_text|> automatically, so we don't include it here.
-        let formatted = format!(
-            "<|start_header_id|>user<|end_header_id|>\n\n{prompt}<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n"
-        );
-
+        // The frontend formats the full multi-turn conversation using Llama 3's
+        // chat template, so we tokenize verbatim. `AddBos::Always` prepends
+        // <|begin_of_text|> automatically — the frontend MUST NOT include it.
         let tokens = self
             .model
-            .str_to_token(&formatted, AddBos::Always)
+            .str_to_token(prompt, AddBos::Always)
             .context("tokenisation failed")?;
 
         if tokens.len() as u32 >= self.ctx_size {
