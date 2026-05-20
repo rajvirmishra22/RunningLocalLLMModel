@@ -110,13 +110,14 @@ impl Engine {
             let candidates = ctx.candidates_ith(last_idx);
             let mut arr = LlamaTokenDataArray::from_iter(candidates, false);
 
-            // Temperature + top-p sampling. 0.1.54 takes `&mut LlamaContext`
-            // directly (older snapshots wrapped it in Option).
+            // In 0.1.54 the filters take `Option<&mut LlamaContext>` (the
+            // context is used for grammar-aware sampling, which we don't use),
+            // while the final `sample_token` takes a bare `&mut LlamaContext`.
             if opts.top_p > 0.0 && opts.top_p < 1.0 {
-                arr.sample_top_p(&mut ctx, opts.top_p, 1);
+                arr.sample_top_p(Some(&mut ctx), opts.top_p, 1);
             }
             if opts.temperature > 0.0 {
-                arr.sample_temp(&mut ctx, opts.temperature);
+                arr.sample_temp(Some(&mut ctx), opts.temperature);
             }
             let next = arr.sample_token(&mut ctx);
 
