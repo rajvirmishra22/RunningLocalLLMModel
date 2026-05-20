@@ -103,19 +103,22 @@ impl Engine {
                 break;
             }
 
-            // Sample next token.
-            let candidates = ctx.candidates();
+            // Sample next token. llama-cpp-2 0.1.54 exposes per-position
+            // candidates via `candidates_ith(i)` — we want the logits for the
+            // last token we just decoded (index = n_tokens - 1).
+            let last_idx = batch.n_tokens() - 1;
+            let candidates = ctx.candidates_ith(last_idx);
             let mut arr = LlamaTokenDataArray::from_iter(candidates, false);
 
-            // Temperature + top-p sampling. llama-cpp-2 exposes these as
-            // mutating helpers on the token data array.
+            // Temperature + top-p sampling. 0.1.54 takes `&mut LlamaContext`
+            // directly (older snapshots wrapped it in Option).
             if opts.top_p > 0.0 && opts.top_p < 1.0 {
-                arr.sample_top_p(Some(&mut ctx), opts.top_p, 1);
+                arr.sample_top_p(&mut ctx, opts.top_p, 1);
             }
             if opts.temperature > 0.0 {
-                arr.sample_temp(Some(&mut ctx), opts.temperature);
+                arr.sample_temp(&mut ctx, opts.temperature);
             }
-            let next = arr.sample_token(Some(&mut ctx));
+            let next = arr.sample_token(&mut ctx);
 
             // Stop on EOS.
             if next == self.model.token_eos() {
