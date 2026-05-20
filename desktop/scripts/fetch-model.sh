@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # Downloads the bundled starter model into src-tauri/resources/model.gguf.
-# Qwen 2.5 0.5B Instruct, Q4_K_M quantization, ~400 MB.
+# Llama 3.2 1B Instruct, Q4_K_M quantization, ~770 MB.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 mkdir -p src-tauri/resources
 
-MODEL_URL="https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf"
+MODEL_URL="https://huggingface.co/bartowski/Llama-3.2-1B-Instruct-GGUF/resolve/main/Llama-3.2-1B-Instruct-Q4_K_M.gguf"
 DEST="src-tauri/resources/model.gguf"
 
 if [ -f "$DEST" ]; then
@@ -14,7 +14,7 @@ if [ -f "$DEST" ]; then
   exit 0
 fi
 
-echo "[fetch-model] downloading starter model (~400 MB)..."
+echo "[fetch-model] downloading starter model (Llama 3.2 1B Instruct Q4_K_M, ~770 MB)..."
 if command -v curl >/dev/null 2>&1; then
   curl -L --fail --progress-bar -o "$DEST" "$MODEL_URL"
 elif command -v wget >/dev/null 2>&1; then

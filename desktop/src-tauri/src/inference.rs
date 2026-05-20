@@ -64,11 +64,10 @@ impl Engine {
             .new_context(&self.backend, ctx_params)
             .context("failed to create llama context")?;
 
-        // Chat templates vary per model. Qwen 2.5 Instruct expects ChatML-style
-        // tags; this template works for Qwen and is a reasonable default that
-        // most modern instruct models tolerate.
+        // Chat template for Llama 3.2 Instruct. `AddBos::Always` below prepends
+        // <|begin_of_text|> automatically, so we don't include it here.
         let formatted = format!(
-            "<|im_start|>user\n{prompt}<|im_end|>\n<|im_start|>assistant\n"
+            "<|start_header_id|>user<|end_header_id|>\n\n{prompt}<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n"
         );
 
         let tokens = self
@@ -130,6 +129,12 @@ impl Engine {
                 .model
                 .token_to_str(next, Special::Tokenize)
                 .unwrap_or_default();
+            // Llama 3 marks end-of-turn with <|eot_id|>, which is distinct from
+            // the model's primary EOS and isn't always returned by `token_eos()`.
+            // Stop cleanly when we see any of Llama 3's end-of-turn markers.
+            if piece == "<|eot_id|>" || piece == "<|end_of_text|>" {
+                break;
+            }
             output.push_str(&piece);
             on_token(&piece);
 

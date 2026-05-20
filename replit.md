@@ -36,7 +36,7 @@ Until that's set, the landing page shows "WINDOWS .EXE — COMING SOON" as a dis
 
 - **Workspace (Replit-hosted)**: pnpm workspaces, Node.js 24, TypeScript 5.9, React + Vite + Tailwind CSS v4 + shadcn/ui + framer-motion + wouter.
 - **In-browser inference** (`artifacts/localmodel-studio`): `@mlc-ai/web-llm` on WebGPU. Cached to IndexedDB after first download.
-- **Desktop inference** (`desktop/`): Tauri 2 + `llama-cpp-2` (Rust bindings around native llama.cpp). Bundled starter model (`Qwen2.5-0.5B-Instruct-Q4_K_M.gguf`, ~400 MB) included in the installer via Tauri's `bundle.resources`.
+- **Desktop inference** (`desktop/`): Tauri 2 + `llama-cpp-2` (Rust bindings around native llama.cpp). Bundled starter model (`Llama-3.2-1B-Instruct-Q4_K_M.gguf`, ~770 MB) included in the installer via Tauri's `bundle.resources`. Prompt template in `desktop/src-tauri/src/inference.rs` uses Llama 3 header tokens (`<|start_header_id|>...`); stops on `<|eot_id|>` / `<|end_of_text|>`.
 - **Storage** (web app): localStorage for conversations/profiles; IndexedDB for model weights.
 
 ## Where things live (in-browser app)
