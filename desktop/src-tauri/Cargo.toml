@@ -20,7 +20,10 @@ parking_lot = "0.12"
 
 # llama.cpp Rust bindings. Compiles llama.cpp from source on first build.
 # https://crates.io/crates/llama-cpp-2
-llama-cpp-2 = "0.1"
+# Pinned: 0.1.55+ replaced the direct sample_top_p/sample_temp/sample_token
+# methods on LlamaTokenDataArray with the new LlamaSampler chain API, which
+# would require rewriting inference.rs. Stay on 0.1.54.
+llama-cpp-2 = "=0.1.54"
 
 [features]
 default = []
