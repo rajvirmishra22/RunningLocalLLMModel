@@ -49,7 +49,7 @@ async fn init_model(
     let engine = tokio::task::spawn_blocking(move || Engine::load(&mp))
         .await
         .map_err(|e| format!("model load task panicked: {e}"))?
-        .map_err(|e| format!("model load failed: {e}"))?;
+        .map_err(|e| format!("model load failed: {e:#}"))?;
 
     let name = model_path
         .file_name()

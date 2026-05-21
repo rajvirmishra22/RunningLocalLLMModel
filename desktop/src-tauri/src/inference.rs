@@ -36,8 +36,26 @@ impl Engine {
         // On CPU-only builds this is a no-op.
         params = params.with_n_gpu_layers(999);
 
-        let model = LlamaModel::load_from_file(&backend, model_path, &params)
-            .with_context(|| format!("could not load GGUF model at {model_path:?}"))?;
+        // On Windows, Tauri's path resolver returns extended-length paths
+        // prefixed with `\\?\`. llama.cpp opens files via C `fopen()`, which
+        // doesn't accept that prefix on every Windows build. Strip it so we
+        // hand llama.cpp a plain `C:\...` path.
+        let cleaned_path: std::path::PathBuf = {
+            let s = model_path.to_string_lossy();
+            let trimmed = s
+                .strip_prefix(r"\\?\UNC\")
+                .map(|rest| format!(r"\\{}", rest))
+                .or_else(|| s.strip_prefix(r"\\?\").map(|rest| rest.to_string()))
+                .unwrap_or_else(|| s.to_string());
+            std::path::PathBuf::from(trimmed)
+        };
+
+        let model = LlamaModel::load_from_file(&backend, &cleaned_path, &params)
+            .with_context(|| {
+                format!(
+                    "could not load GGUF model at {cleaned_path:?} (original: {model_path:?})"
+                )
+            })?;
 
         Ok(Self {
             backend: Arc::new(backend),
