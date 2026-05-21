@@ -104,7 +104,7 @@ export default function Models() {
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-xl font-semibold">Models</h1>
-            <p className="text-sm text-muted-foreground mt-0.5">Manage your in-browser model profiles</p>
+            <p className="text-sm text-muted-foreground mt-0.5">Manage your local model profiles</p>
           </div>
           <Button size="sm" onClick={openAdd} data-testid="btn-add-profile" className="gap-2">
             <Plus className="w-3.5 h-3.5" />
@@ -116,7 +116,7 @@ export default function Models() {
           <div className="flex items-center gap-2 p-3 rounded-lg bg-yellow-500/10 border border-yellow-500/20">
             <AlertCircle className="w-4 h-4 text-yellow-500 flex-shrink-0" />
             <p className="text-xs text-yellow-500">
-              WebGPU is not available. Use Chrome 113+ or Edge 113+ for in-browser inference.
+              Native inference engine is unavailable. Try reinstalling LocalModel Studio.
             </p>
           </div>
         )}

@@ -203,8 +203,8 @@ export default function Tuning() {
               label="RAM"
               value={sysInfo.ram ? `~${sysInfo.ram} GB (approximate)` : "Unknown"}
             />
-            <InfoRow label="WebGPU" value={webgpuAvailable ? "Available" : "Not available"} valueClass={webgpuAvailable ? "text-green-500" : "text-yellow-500"} />
-            <InfoRow label="GPU adapter" value={gpu?.adapterName || gpu?.vendor || "Hidden by browser"} />
+            <InfoRow label="Engine" value={webgpuAvailable ? "Native (llama.cpp)" : "Not available"} valueClass={webgpuAvailable ? "text-green-500" : "text-yellow-500"} />
+            <InfoRow label="GPU adapter" value={gpu?.adapterName || gpu?.vendor || "Detected by llama.cpp"} />
             <InfoRow
               label="Max GPU buffer"
               value={gpu?.maxBufferSizeMb ? `${(gpu.maxBufferSizeMb / 1024).toFixed(1)} GB` : "Unknown"}

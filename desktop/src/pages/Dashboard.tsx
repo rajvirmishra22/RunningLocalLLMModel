@@ -98,9 +98,9 @@ export default function Dashboard() {
           <div className="flex items-center gap-3 p-3.5 rounded-lg bg-green-500/10 border border-green-500/20">
             <Globe className="w-4 h-4 text-green-500 flex-shrink-0" />
             <div>
-              <p className="text-sm font-medium text-green-500">WebGPU detected — runs offline after first download</p>
+              <p className="text-sm font-medium text-green-500">Native engine ready — runs fully offline</p>
               <p className="text-xs text-muted-foreground mt-0.5">
-                Everything runs in your browser. Models download once over the internet, then run fully offline. No installs, no servers, no cloud.
+                Everything runs natively on your machine via llama.cpp. The starter model is bundled with the app — no downloads, no servers, no cloud.
               </p>
             </div>
           </div>
@@ -110,9 +110,9 @@ export default function Dashboard() {
           <div className="flex items-start gap-3 p-3.5 rounded-lg bg-yellow-500/10 border border-yellow-500/20">
             <AlertTriangle className="w-4 h-4 text-yellow-500 mt-0.5 flex-shrink-0" />
             <div>
-              <p className="text-sm font-medium text-yellow-500">WebGPU not available</p>
+              <p className="text-sm font-medium text-yellow-500">Native engine unavailable</p>
               <p className="text-xs text-muted-foreground mt-0.5">
-                LocalModel Studio uses WebGPU for in-browser inference. Please use Chrome 113+ or Edge 113+ on a device with a supported GPU.
+                LocalModel Studio's native llama.cpp engine couldn't initialize on this machine. Try reinstalling the app.
               </p>
             </div>
           </div>
@@ -130,7 +130,7 @@ export default function Dashboard() {
               <InfoRow label="OS" value={sysInfo.os} testId="system-os" />
               <InfoRow label="CPU Cores" value={String(sysInfo.cpuCores)} testId="system-cpu" />
               <InfoRow label="RAM" value={sysInfo.ram ? `~${sysInfo.ram} GB` : "Unknown"} testId="system-ram" />
-              <InfoRow label="WebGPU" value={webgpuAvailable ? "Available" : "Not available"} testId="system-webgpu" />
+              <InfoRow label="Engine" value={webgpuAvailable ? "Native (llama.cpp)" : "Not available"} testId="system-webgpu" />
             </CardContent>
           </Card>
 
@@ -149,10 +149,10 @@ export default function Dashboard() {
                   ) : (
                     <XCircle className="w-3.5 h-3.5 text-muted-foreground" />
                   )}
-                  <span className="text-xs font-medium">In-Browser Inference</span>
+                  <span className="text-xs font-medium">Native Inference</span>
                 </div>
                 <span className="text-[10px] text-muted-foreground">
-                  {webgpuAvailable ? "Ready" : "No WebGPU"}
+                  {webgpuAvailable ? "Ready" : "Unavailable"}
                 </span>
               </div>
               <div className="flex items-center justify-between py-0.5">

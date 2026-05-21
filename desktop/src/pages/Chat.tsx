@@ -98,7 +98,7 @@ export default function Chat() {
   const handleLoadWebLLM = async () => {
     if (!selectedProfile) return;
     if (!webllmService.checkWebGPU()) {
-      setWebllmLoad({ type: "error", message: "WebGPU is not available in your browser. Use Chrome 113+ or Edge 113+." });
+      setWebllmLoad({ type: "error", message: "Native inference engine is not available. Try reinstalling LocalModel Studio." });
       return;
     }
     setWebllmLoad({ type: "loading", text: "Initializing...", progress: 0 });
@@ -434,7 +434,7 @@ export default function Chat() {
 
           {provider === "local" && selectedProfile && (
             <span className="text-[10px] px-2 py-0.5 rounded-full bg-green-500/10 text-green-500 border border-green-500/20 font-medium">
-              In-Browser
+              Local
             </span>
           )}
           {provider === "openai" && (
@@ -630,9 +630,9 @@ function WebLLMLoadBanner({
             <div className="flex items-center gap-2.5">
               <Globe className="w-4 h-4 text-green-500 flex-shrink-0" />
               <div>
-                <p className="text-xs font-medium">{modelName} runs entirely in your browser</p>
+                <p className="text-xs font-medium">{modelName} runs natively on your machine</p>
                 <p className="text-[11px] text-muted-foreground">
-                  Downloads once (~0.7–5 GB) via internet, then runs fully offline.
+                  Bundled with the app — works fully offline, nothing leaves your device.
                 </p>
               </div>
             </div>
