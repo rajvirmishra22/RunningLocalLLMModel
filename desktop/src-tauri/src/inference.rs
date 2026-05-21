@@ -54,10 +54,51 @@ impl Engine {
             std::path::PathBuf::from(trimmed)
         };
 
+        // Diagnostic: read the GGUF magic bytes + file size before loading.
+        // llama.cpp logs the real failure reason to stderr inside the C lib,
+        // which a windowed app discards. Without these breadcrumbs, every
+        // load failure surfaces as the unhelpful "null result from llama_cpp".
+        let diag = {
+            let size = std::fs::metadata(&cleaned_path)
+                .map(|m| m.len())
+                .unwrap_or(0);
+            let mut magic = [0u8; 8];
+            let read_ok = {
+                use std::io::Read;
+                std::fs::File::open(&cleaned_path)
+                    .and_then(|mut f| f.read_exact(&mut magic))
+                    .is_ok()
+            };
+            let magic_str = if read_ok {
+                let ascii: String = magic
+                    .iter()
+                    .map(|b| {
+                        if b.is_ascii_graphic() {
+                            *b as char
+                        } else {
+                            '.'
+                        }
+                    })
+                    .collect();
+                format!(
+                    "{ascii:?} (hex {:02x} {:02x} {:02x} {:02x})",
+                    magic[0], magic[1], magic[2], magic[3]
+                )
+            } else {
+                "<could not read first 8 bytes>".to_string()
+            };
+            format!(
+                "size={} bytes ({:.1} MB), magic={}",
+                size,
+                size as f64 / (1024.0 * 1024.0),
+                magic_str
+            )
+        };
+
         let model = LlamaModel::load_from_file(&backend, &cleaned_path, &params)
             .with_context(|| {
                 format!(
-                    "could not load GGUF model at {cleaned_path:?} (original: {model_path:?})"
+                    "could not load GGUF at {cleaned_path:?}; {diag}"
                 )
             })?;
 
