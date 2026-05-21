@@ -26,6 +26,10 @@ pub struct GenerateOpts {
     pub max_tokens: usize,
     pub temperature: f32,
     pub top_p: f32,
+    /// Decoded-piece stop markers. We break out of the generation loop as soon
+    /// as the model emits any of these (e.g. `<|eot_id|>` for Llama 3,
+    /// `<|im_end|>` for Qwen / ChatML, `<|end|>` for Phi 3.5).
+    pub stop_strings: Vec<String>,
 }
 
 impl Engine {
@@ -144,10 +148,11 @@ impl Engine {
                 .model
                 .token_to_str(next, Special::Tokenize)
                 .unwrap_or_default();
-            // Llama 3 marks end-of-turn with <|eot_id|>, which is distinct from
-            // the model's primary EOS and isn't always returned by `token_eos()`.
-            // Stop cleanly when we see any of Llama 3's end-of-turn markers.
-            if piece == "<|eot_id|>" || piece == "<|end_of_text|>" {
+            // Many instruct-tuned models use family-specific end-of-turn
+            // markers that aren't reported as the primary EOS (Llama 3's
+            // `<|eot_id|>`, Qwen/ChatML `<|im_end|>`, Phi 3 `<|end|>`, etc.).
+            // The frontend tells us which ones to watch for per model family.
+            if opts.stop_strings.iter().any(|s| s == &piece) {
                 break;
             }
             output.push_str(&piece);

@@ -14,9 +14,14 @@ tauri = { version = "2", features = [] }
 tauri-plugin-shell = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "fs", "io-util"] }
 anyhow = "1"
 parking_lot = "0.12"
+
+# Used by the in-app model downloader (Hugging Face GGUF fetcher).
+# rustls-tls avoids the OpenSSL system-dep on Windows.
+reqwest = { version = "0.12", default-features = false, features = ["stream", "rustls-tls"] }
+futures-util = "0.3"
 
 # llama.cpp Rust bindings. Compiles llama.cpp from source on first build.
 # https://crates.io/crates/llama-cpp-2
