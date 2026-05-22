@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { Link } from "wouter";
-import { Send, Square, Trash2, Plus, MessageSquare, Clock, Zap, Download, Loader2, AlertCircle, Globe, Sliders, Cloud, CloudOff } from "lucide-react";
+import { Send, Square, Trash2, Plus, MessageSquare, Clock, Zap, Download, Loader2, AlertCircle, Globe, Sliders, Cloud, CloudOff, Paperclip, FileText, FileCode, FileSpreadsheet, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -22,6 +22,12 @@ import {
   type CloudProvider,
   type CloudProviderConfig,
 } from "@/services/cloudProviders";
+import {
+  extractFile,
+  buildAttachmentBlock,
+  FILE_INPUT_ACCEPT,
+  type ExtractedFile,
+} from "@/services/fileExtractor";
 
 type Provider = "local" | CloudProvider;
 
@@ -42,8 +48,13 @@ export default function Chat() {
   const [webllmLoad, setWebllmLoad] = useState<LoadState>({ type: "idle" });
   const [provider, setProvider] = useState<Provider>("local");
   const [cloudCfg, setCloudCfg] = useState<CloudProviderConfig>(() => loadCloudConfig());
+  // Attachments staged for the next message. Cleared after send.
+  const [attachments, setAttachments] = useState<ExtractedFile[]>([]);
+  const [attachError, setAttachError] = useState<string | null>(null);
+  const [attaching, setAttaching] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const activeConv = conversations.find((c) => c.id === activeConvId) ?? null;
   const selectedProfile = profiles.find((p) => p.id === selectedProfileId);
@@ -133,8 +144,36 @@ export default function Chat() {
     loadData();
   };
 
+  const handleFilesPicked = async (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    setAttachError(null);
+    setAttaching(true);
+    const picked: ExtractedFile[] = [];
+    for (const file of Array.from(files)) {
+      try {
+        const ex = await extractFile(file);
+        picked.push(ex);
+      } catch (e) {
+        setAttachError(
+          `${file.name}: ${e instanceof Error ? e.message : "could not read file"}`,
+        );
+      }
+    }
+    if (picked.length > 0) {
+      setAttachments((prev) => [...prev, ...picked]);
+    }
+    setAttaching(false);
+    // Reset the input so re-picking the same file fires onChange again.
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  };
+
+  const removeAttachment = (idx: number) => {
+    setAttachments((prev) => prev.filter((_, i) => i !== idx));
+    setAttachError(null);
+  };
+
   const sendMessage = async () => {
-    if (!input.trim() || isGenerating) return;
+    if ((!input.trim() && attachments.length === 0) || isGenerating) return;
     if (provider === "local" && (!selectedProfile || !webllmReady)) return;
     if (provider !== "local" && !cloudReady) return;
 
@@ -158,10 +197,15 @@ export default function Chat() {
       };
     }
 
+    // Inline extracted file text as a labeled context block before the user's
+    // typed message. The model sees one well-structured prompt; the user sees
+    // their own text in the chat bubble plus a footer chip per attachment.
+    const attachmentBlock = buildAttachmentBlock(attachments);
+    const visibleText = input.trim();
     const userMsg: Message = {
       id: `msg_${Date.now()}`,
       role: "user",
-      content: input,
+      content: attachmentBlock + (visibleText || "(see attached files)"),
       timestamp: new Date().toISOString(),
     };
 
@@ -177,6 +221,8 @@ export default function Chat() {
     setActiveConvId(updatedConv.id);
     loadData();
     setInput("");
+    setAttachments([]);
+    setAttachError(null);
     setIsGenerating(true);
     setStreamingContent("");
 
@@ -313,8 +359,9 @@ export default function Chat() {
   };
 
   const canSend =
-    input.trim().length > 0 &&
+    (input.trim().length > 0 || attachments.length > 0) &&
     !isGenerating &&
+    !attaching &&
     (provider === "local" ? profiles.length > 0 && webllmReady : cloudReady);
 
   return (
@@ -553,7 +600,61 @@ export default function Chat() {
         {/* Input area */}
         <div className="px-4 py-3 border-t border-border flex-shrink-0">
           <div className="max-w-2xl mx-auto">
+            {/* Attachment chips — shown above the textarea so the user can see
+                what's about to be sent. */}
+            {(attachments.length > 0 || attachError) && (
+              <div className="mb-2 space-y-1.5">
+                {attachments.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5">
+                    {attachments.map((file, idx) => (
+                      <AttachmentChip
+                        key={`${file.name}-${idx}`}
+                        file={file}
+                        onRemove={() => removeAttachment(idx)}
+                      />
+                    ))}
+                  </div>
+                )}
+                {attachError && (
+                  <div className="flex items-start gap-1.5 text-[11px] text-red-500">
+                    <AlertCircle className="w-3 h-3 mt-0.5 flex-shrink-0" />
+                    <span className="flex-1">{attachError}</span>
+                    <button
+                      onClick={() => setAttachError(null)}
+                      className="text-muted-foreground hover:text-foreground"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              accept={FILE_INPUT_ACCEPT}
+              className="hidden"
+              onChange={(e) => void handleFilesPicked(e.target.files)}
+              data-testid="input-file-attach"
+            />
+
             <div className="relative flex items-end gap-2">
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={isGenerating || attaching}
+                title="Attach a file (PDF, text, code, CSV, JSON…)"
+                data-testid="btn-attach-file"
+                className="h-9 w-9 flex items-center justify-center rounded-md border border-border hover:bg-muted text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex-shrink-0"
+              >
+                {attaching ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Paperclip className="w-4 h-4" />
+                )}
+              </button>
               <Textarea
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
@@ -563,7 +664,9 @@ export default function Chat() {
                     ? provider === "local"
                       ? "Load the model above before chatting..."
                       : `Add an ${provider === "openai" ? "OpenAI" : "Anthropic"} API key in Settings to chat.`
-                    : "Type a message… (Enter to send, Shift+Enter for newline)"
+                    : attachments.length > 0
+                      ? "Add a question about the attached files… (Enter to send)"
+                      : "Type a message… (Enter to send, Shift+Enter for newline)"
                 }
                 className="flex-1 min-h-[40px] max-h-36 resize-none text-sm py-2.5 pr-2"
                 rows={1}
@@ -719,5 +822,51 @@ function StatBit({ icon, value }: { icon?: React.ReactNode; value: string }) {
       {icon}
       {value}
     </span>
+  );
+}
+
+function AttachmentChip({
+  file,
+  onRemove,
+}: {
+  file: ExtractedFile;
+  onRemove: () => void;
+}) {
+  const Icon =
+    file.kind === "pdf"
+      ? FileText
+      : file.kind === "code"
+        ? FileCode
+        : file.kind === "data"
+          ? FileSpreadsheet
+          : FileText;
+  const sizeLabel =
+    file.bytes < 1024
+      ? `${file.bytes} B`
+      : file.bytes < 1024 * 1024
+        ? `${(file.bytes / 1024).toFixed(1)} KB`
+        : `${(file.bytes / 1024 / 1024).toFixed(1)} MB`;
+  return (
+    <div
+      data-testid={`attach-chip-${file.name}`}
+      className="inline-flex items-center gap-1.5 pl-2 pr-1 py-1 rounded-md border border-border bg-muted/50 max-w-[280px]"
+      title={`${file.chars.toLocaleString()} characters${file.truncated ? " (truncated)" : ""}`}
+    >
+      <Icon className="w-3 h-3 text-muted-foreground flex-shrink-0" />
+      <span className="text-[11px] font-medium truncate">{file.name}</span>
+      <span className="text-[10px] text-muted-foreground flex-shrink-0">{sizeLabel}</span>
+      {file.truncated && (
+        <span className="text-[9px] px-1 rounded bg-yellow-500/10 text-yellow-500 border border-yellow-500/20 flex-shrink-0">
+          truncated
+        </span>
+      )}
+      <button
+        onClick={onRemove}
+        className="p-0.5 rounded hover:bg-destructive/10 hover:text-destructive text-muted-foreground transition-colors flex-shrink-0"
+        title="Remove attachment"
+      >
+        <X className="w-3 h-3" />
+      </button>
+    </div>
   );
 }
