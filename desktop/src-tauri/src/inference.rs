@@ -14,7 +14,24 @@ use llama_cpp_2::{
 };
 use std::num::NonZeroU32;
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
+
+/// `llama_backend_init` may only be called **once per process** — calling it
+/// a second time returns `BackendAlreadyInitialized` and fails the load.
+/// Cache the backend in a process-wide `OnceLock` so every `Engine::load`
+/// (bundled model on startup, then any user-downloaded model) reuses the
+/// same instance instead of re-initializing.
+static BACKEND: OnceLock<Arc<LlamaBackend>> = OnceLock::new();
+
+fn shared_backend() -> Result<Arc<LlamaBackend>> {
+    if let Some(b) = BACKEND.get() {
+        return Ok(b.clone());
+    }
+    let b = Arc::new(LlamaBackend::init().context("failed to init llama backend")?);
+    // Race: another thread may have set it first; that's fine, use whichever won.
+    let _ = BACKEND.set(b.clone());
+    Ok(BACKEND.get().cloned().unwrap_or(b))
+}
 
 pub struct Engine {
     backend: Arc<LlamaBackend>,
@@ -34,7 +51,7 @@ pub struct GenerateOpts {
 
 impl Engine {
     pub fn load(model_path: &Path) -> Result<Self> {
-        let backend = LlamaBackend::init().context("failed to init llama backend")?;
+        let backend = shared_backend()?;
         let mut params = LlamaModelParams::default();
         // Offload as many layers as possible to GPU when built with cuda/vulkan/metal features.
         // On CPU-only builds this is a no-op.
