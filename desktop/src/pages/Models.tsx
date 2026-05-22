@@ -62,19 +62,40 @@ type DownloadState =
   | { kind: "downloading"; text: string; progress: number }
   | { kind: "error"; message: string };
 
+type Fit = "fits" | "tight" | "too_big" | "unknown";
+
 /**
- * Bucket a model into a fit verdict based on the user's RAM.
- *  - "recommended": comfortably fits with headroom (RAM ≥ 1.5 × minRamGb)
- *  - "ok": fits, but tight (RAM ≥ minRamGb)
- *  - "tight": might run but risky (RAM ≥ minRamGb - 1)
+ * Per-model fit verdict (no recommendation logic — that's chosen ONCE at the
+ * catalog level so only a single model gets the "Recommended" badge).
+ *  - "fits":    comfortably runs on this machine (RAM ≥ 1.5 × minRamGb)
+ *  - "tight":   might run but risky (minRamGb − 1 ≤ RAM < 1.5 × minRamGb)
  *  - "too_big": almost certainly won't run
  */
-function fitFor(model: WebLLMModel, ramGb: number | null): "recommended" | "ok" | "tight" | "too_big" | "unknown" {
+function fitFor(model: WebLLMModel, ramGb: number | null): Fit {
   if (!ramGb) return "unknown";
-  if (ramGb >= model.minRamGb * 1.5) return "recommended";
-  if (ramGb >= model.minRamGb) return "ok";
+  if (ramGb >= model.minRamGb * 1.5) return "fits";
   if (ramGb >= model.minRamGb - 1) return "tight";
   return "too_big";
+}
+
+/**
+ * Pick exactly one model to mark as "Recommended" — the largest catalog
+ * entry that comfortably fits the user's RAM. Falls back to the largest
+ * one that barely fits, then null if nothing does. Returns the model id
+ * or null. This makes the badge actually informative instead of slapping
+ * "Recommended" on every model the way a per-row threshold would.
+ */
+function pickRecommendedId(models: WebLLMModel[], ramGb: number | null): string | null {
+  if (!ramGb) return null;
+  const comfortable = models.filter((m) => ramGb >= m.minRamGb * 1.5);
+  if (comfortable.length > 0) {
+    return comfortable.reduce((a, b) => (a.minRamGb >= b.minRamGb ? a : b)).id;
+  }
+  const just_fits = models.filter((m) => ramGb >= m.minRamGb - 1);
+  if (just_fits.length > 0) {
+    return just_fits.reduce((a, b) => (a.minRamGb >= b.minRamGb ? a : b)).id;
+  }
+  return null;
 }
 
 export default function Models() {
@@ -271,11 +292,14 @@ export default function Models() {
           </p>
 
           <div className="space-y-2">
-            {WEBLLM_MODELS.map((m) => (
+            {(() => {
+              const recommendedId = pickRecommendedId(WEBLLM_MODELS, ramGb);
+              return WEBLLM_MODELS.map((m) => (
               <CatalogRow
                 key={m.id}
                 model={m}
                 fit={fitFor(m, ramGb)}
+                isRecommended={m.id === recommendedId}
                 isDownloaded={downloadedIds.has(m.id)}
                 isBundled={m.id === BUNDLED_MODEL_ID}
                 downloadState={downloadStates[m.id] ?? { kind: "idle" }}
@@ -292,7 +316,8 @@ export default function Models() {
                   })
                 }
               />
-            ))}
+            ));
+            })()}
           </div>
         </section>
       </div>
@@ -382,7 +407,8 @@ export default function Models() {
 
 interface CatalogRowProps {
   model: WebLLMModel;
-  fit: "recommended" | "ok" | "tight" | "too_big" | "unknown";
+  fit: Fit;
+  isRecommended: boolean;
   isDownloaded: boolean;
   isBundled: boolean;
   downloadState: DownloadState;
@@ -397,6 +423,7 @@ interface CatalogRowProps {
 function CatalogRow({
   model,
   fit,
+  isRecommended,
   isDownloaded,
   isBundled,
   downloadState,
@@ -419,6 +446,11 @@ function CatalogRow({
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2 flex-wrap">
             <span className="text-sm font-semibold">{model.label}</span>
+            {isRecommended && (
+              <StatusBadge tone="green" icon={<Sparkles className="w-2.5 h-2.5" />}>
+                Recommended
+              </StatusBadge>
+            )}
             <FitBadge fit={fit} />
             {isBundled && <StatusBadge tone="green" icon={<CheckCircle2 className="w-2.5 h-2.5" />}>Bundled</StatusBadge>}
             {isDownloaded && !isBundled && (
@@ -511,18 +543,8 @@ function CatalogRow({
   );
 }
 
-function FitBadge({ fit }: { fit: "recommended" | "ok" | "tight" | "too_big" | "unknown" }) {
-  if (fit === "unknown") return null;
-  if (fit === "recommended") {
-    return (
-      <StatusBadge tone="green" icon={<Sparkles className="w-2.5 h-2.5" />}>
-        Recommended
-      </StatusBadge>
-    );
-  }
-  if (fit === "ok") {
-    return <StatusBadge tone="blue">Fits your RAM</StatusBadge>;
-  }
+function FitBadge({ fit }: { fit: Fit }) {
+  if (fit === "unknown" || fit === "fits") return null;
   if (fit === "tight") {
     return <StatusBadge tone="yellow">Tight on RAM</StatusBadge>;
   }
