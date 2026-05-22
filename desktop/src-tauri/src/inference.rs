@@ -9,8 +9,8 @@ use llama_cpp_2::{
     context::params::LlamaContextParams,
     llama_backend::LlamaBackend,
     llama_batch::LlamaBatch,
-    model::{params::LlamaModelParams, AddBos, LlamaModel, Special},
-    token::data_array::LlamaTokenDataArray,
+    model::{params::LlamaModelParams, AddBos, LlamaModel},
+    sampling::LlamaSampler,
 };
 use std::num::NonZeroU32;
 use std::path::Path;
@@ -36,7 +36,7 @@ impl Engine {
     pub fn load(model_path: &Path) -> Result<Self> {
         let backend = LlamaBackend::init().context("failed to init llama backend")?;
         let mut params = LlamaModelParams::default();
-        // Offload as many layers as possible to GPU when built with cuda/vulkan features.
+        // Offload as many layers as possible to GPU when built with cuda/vulkan/metal features.
         // On CPU-only builds this is a no-op.
         params = params.with_n_gpu_layers(999);
 
@@ -96,11 +96,7 @@ impl Engine {
         };
 
         let model = LlamaModel::load_from_file(&backend, &cleaned_path, &params)
-            .with_context(|| {
-                format!(
-                    "could not load GGUF at {cleaned_path:?}; {diag}"
-                )
-            })?;
+            .with_context(|| format!("could not load GGUF at {cleaned_path:?}; {diag}"))?;
 
         Ok(Self {
             backend: Arc::new(backend),
@@ -127,9 +123,10 @@ impl Engine {
             .new_context(&self.backend, ctx_params)
             .context("failed to create llama context")?;
 
-        // The frontend formats the full multi-turn conversation using Llama 3's
-        // chat template, so we tokenize verbatim. `AddBos::Always` prepends
-        // <|begin_of_text|> automatically — the frontend MUST NOT include it.
+        // The frontend formats the full multi-turn conversation using each
+        // model family's chat template, so we tokenize verbatim. `AddBos::Always`
+        // prepends the model's BOS token automatically — the frontend MUST NOT
+        // include it.
         let tokens = self
             .model
             .str_to_token(prompt, AddBos::Always)
@@ -144,55 +141,59 @@ impl Engine {
         }
 
         let mut batch = LlamaBatch::new(self.ctx_size as usize, 1);
-        let last_idx = (tokens.len() - 1) as i32;
+        let last_prompt_idx = (tokens.len() - 1) as i32;
         for (i, tok) in tokens.iter().enumerate() {
             batch
-                .add(*tok, i as i32, &[0], i as i32 == last_idx)
+                .add(*tok, i as i32, &[0], i as i32 == last_prompt_idx)
                 .context("batch add failed")?;
         }
 
         ctx.decode(&mut batch).context("initial decode failed")?;
 
+        // Build the sampler chain once. llama-cpp-2 0.1.146 replaced the
+        // direct sample_top_p/sample_temp/sample_token methods on
+        // LlamaTokenDataArray with this composable chain API. A chain must
+        // end with one of greedy / dist / mirostat — we use dist(0) for
+        // randomized sampling and greedy() when temperature is 0.
+        let mut sampler = if opts.temperature <= 0.0 {
+            LlamaSampler::chain_simple([LlamaSampler::greedy()])
+        } else {
+            let mut chain = Vec::new();
+            if opts.top_p > 0.0 && opts.top_p < 1.0 {
+                chain.push(LlamaSampler::top_p(opts.top_p, 1));
+            }
+            chain.push(LlamaSampler::temp(opts.temperature));
+            chain.push(LlamaSampler::dist(0));
+            LlamaSampler::chain_simple(chain)
+        };
+
         let mut n_cur = batch.n_tokens();
         let mut output = String::new();
         let mut produced: usize = 0;
+        let mut decoder = encoding_rs::UTF_8.new_decoder();
 
         while produced < opts.max_tokens {
             if cancelled() {
                 break;
             }
 
-            // Sample next token. llama-cpp-2 0.1.54 exposes per-position
-            // candidates via `candidates_ith(i)` — we want the logits for the
-            // last token we just decoded (index = n_tokens - 1).
+            // Sample from the logits for the last decoded position.
             let last_idx = batch.n_tokens() - 1;
-            let candidates = ctx.candidates_ith(last_idx);
-            let mut arr = LlamaTokenDataArray::from_iter(candidates, false);
-
-            // In 0.1.54 the filters take `Option<&mut LlamaContext>` (the
-            // context is used for grammar-aware sampling, which we don't use),
-            // while the final `sample_token` takes a bare `&mut LlamaContext`.
-            if opts.top_p > 0.0 && opts.top_p < 1.0 {
-                arr.sample_top_p(Some(&mut ctx), opts.top_p, 1);
-            }
-            if opts.temperature > 0.0 {
-                arr.sample_temp(Some(&mut ctx), opts.temperature);
-            }
-            let next = arr.sample_token(&mut ctx);
+            let next = sampler.sample(&ctx, last_idx);
+            sampler.accept(next);
 
             // Stop on EOS.
-            if next == self.model.token_eos() {
+            if self.model.is_eog_token(next) {
                 break;
             }
 
+            // Decode the piece. `special = true` so end-of-turn markers like
+            // <|eot_id|> / <|im_end|> / <|end|> decode to their printable form
+            // and we can match them against stop_strings.
             let piece = self
                 .model
-                .token_to_str(next, Special::Tokenize)
+                .token_to_piece(next, &mut decoder, true, None)
                 .unwrap_or_default();
-            // Many instruct-tuned models use family-specific end-of-turn
-            // markers that aren't reported as the primary EOS (Llama 3's
-            // `<|eot_id|>`, Qwen/ChatML `<|im_end|>`, Phi 3 `<|end|>`, etc.).
-            // The frontend tells us which ones to watch for per model family.
             if opts.stop_strings.iter().any(|s| s == &piece) {
                 break;
             }

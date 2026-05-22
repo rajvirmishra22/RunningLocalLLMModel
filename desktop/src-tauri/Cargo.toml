@@ -23,17 +23,24 @@ parking_lot = "0.12"
 reqwest = { version = "0.12", default-features = false, features = ["stream", "rustls-tls"] }
 futures-util = "0.3"
 
+# Used by inference.rs to decode multi-byte UTF-8 pieces from token_to_piece
+# (llama-cpp-2 0.1.146 requires the caller to supply a Decoder).
+encoding_rs = "0.8"
+
 # llama.cpp Rust bindings. Compiles llama.cpp from source on first build.
 # https://crates.io/crates/llama-cpp-2
-# Pinned: 0.1.55+ replaced the direct sample_top_p/sample_temp/sample_token
-# methods on LlamaTokenDataArray with the new LlamaSampler chain API, which
-# would require rewriting inference.rs. Stay on 0.1.54.
-llama-cpp-2 = "=0.1.54"
+# Pinned to 0.1.146 — 0.1.54 embedded an older llama.cpp that can't load
+# modern GGUF v3 conversions (e.g. bartowski's current Llama 3.2 / Qwen2 /
+# Phi 3.5 / Mistral 0.3 quants). 0.1.146 vendors a recent llama.cpp and
+# uses the new `LlamaSampler` chain API (see inference.rs).
+llama-cpp-2 = "=0.1.146"
 
 [features]
 default = []
-# Enable CUDA acceleration on NVIDIA GPUs (via llama.cpp's cuBLAS backend).
-# Off by default to keep the build portable. 0.1.54 only exposes cublas/metal.
-cuda = ["llama-cpp-2/cublas"]
+# Enable CUDA acceleration on NVIDIA GPUs. 0.1.146 renamed the feature
+# from `cublas` to `cuda`.
+cuda = ["llama-cpp-2/cuda"]
 # Apple Metal acceleration. Only meaningful on macOS builds.
 metal = ["llama-cpp-2/metal"]
+# Vulkan acceleration (cross-vendor GPU).
+vulkan = ["llama-cpp-2/vulkan"]
