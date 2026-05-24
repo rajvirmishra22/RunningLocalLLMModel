@@ -116,7 +116,7 @@ impl Engine {
             .with_context(|| format!("could not load GGUF at {cleaned_path:?}; {diag}"))?;
 
         Ok(Self {
-            backend: Arc::new(backend),
+            backend,
             model: Arc::new(model),
             ctx_size: 4096,
         })
