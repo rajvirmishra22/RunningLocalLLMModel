@@ -37,6 +37,16 @@ type LoadState =
   | { type: "ready" }
   | { type: "error"; message: string };
 
+/**
+ * True when the bundle is running inside the Tauri desktop shell (vs. a plain
+ * browser). Used to swap UI labels like the engine badge ("Native" vs
+ * "In-Browser"). Checked once at module load — the runtime never changes
+ * mid-session.
+ */
+const isTauriRuntime =
+  typeof window !== "undefined" &&
+  (("__TAURI_INTERNALS__" in window) || ("__TAURI__" in window));
+
 export default function Chat() {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeConvId, setActiveConvId] = useState<string | null>(null);
@@ -481,7 +491,7 @@ export default function Chat() {
 
           {provider === "local" && selectedProfile && (
             <span className="text-[10px] px-2 py-0.5 rounded-full bg-green-500/10 text-green-500 border border-green-500/20 font-medium">
-              In-Browser
+              {isTauriRuntime ? "Native" : "In-Browser"}
             </span>
           )}
           {provider === "openai" && (
