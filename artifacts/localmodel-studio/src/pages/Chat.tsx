@@ -47,6 +47,19 @@ const isTauriRuntime =
   typeof window !== "undefined" &&
   (("__TAURI_INTERNALS__" in window) || ("__TAURI__" in window));
 
+/** Conversation sidebar resize bounds + persistence key. */
+const SIDEBAR_KEY = "lmstudio:chat-sidebar-width";
+const SIDEBAR_MIN = 160;
+const SIDEBAR_MAX = 480;
+const SIDEBAR_DEFAULT = 208; // matches the previous hard-coded `w-52`
+
+function readStoredSidebarWidth(): number {
+  if (typeof window === "undefined") return SIDEBAR_DEFAULT;
+  const raw = window.localStorage.getItem(SIDEBAR_KEY);
+  const n = raw ? parseInt(raw, 10) : NaN;
+  return Number.isFinite(n) && n >= SIDEBAR_MIN && n <= SIDEBAR_MAX ? n : SIDEBAR_DEFAULT;
+}
+
 export default function Chat() {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeConvId, setActiveConvId] = useState<string | null>(null);
@@ -65,6 +78,48 @@ export default function Chat() {
   const abortRef = useRef<AbortController | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [sidebarWidth, setSidebarWidth] = useState<number>(() => readStoredSidebarWidth());
+  const [isResizingSidebar, setIsResizingSidebar] = useState(false);
+
+  /**
+   * Begin a sidebar resize drag. Captures the pointer's start x and the
+   * current width, then attaches window-level mousemove/mouseup listeners
+   * that update the width until release. Persists the final value.
+   */
+  const startSidebarResize = (e: React.MouseEvent) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startWidth = sidebarWidth;
+    setIsResizingSidebar(true);
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+
+    const onMove = (ev: MouseEvent) => {
+      const next = Math.max(
+        SIDEBAR_MIN,
+        Math.min(SIDEBAR_MAX, startWidth + (ev.clientX - startX)),
+      );
+      setSidebarWidth(next);
+    };
+    const onUp = () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+      setIsResizingSidebar(false);
+      // Persist final width using the latest committed value.
+      setSidebarWidth((curr) => {
+        try {
+          window.localStorage.setItem(SIDEBAR_KEY, String(curr));
+        } catch {
+          /* localStorage can throw in private mode; harmless. */
+        }
+        return curr;
+      });
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  };
 
   const activeConv = conversations.find((c) => c.id === activeConvId) ?? null;
   const selectedProfile = profiles.find((p) => p.id === selectedProfileId);
@@ -377,7 +432,11 @@ export default function Chat() {
   return (
     <div className="flex h-full">
       {/* Conversation sidebar */}
-      <aside data-testid="chat-sidebar" className="w-52 flex-shrink-0 border-r border-border flex flex-col bg-sidebar">
+      <aside
+        data-testid="chat-sidebar"
+        className="flex-shrink-0 border-r border-border flex flex-col bg-sidebar relative"
+        style={{ width: sidebarWidth }}
+      >
         <div className="p-2 border-b border-sidebar-border">
           <Button
             size="sm"
@@ -404,13 +463,13 @@ export default function Chat() {
                   data-testid={`conv-item-${conv.id}`}
                   onClick={() => setActiveConvId(conv.id)}
                   className={cn(
-                    "flex items-center gap-1.5 px-2.5 py-2 rounded-md cursor-pointer group transition-colors",
+                    "w-full flex items-center gap-1.5 px-2.5 py-2 rounded-md cursor-pointer group transition-colors overflow-hidden",
                     activeConvId === conv.id
                       ? "bg-primary/10 text-primary"
                       : "hover:bg-sidebar-accent text-sidebar-foreground"
                   )}
                 >
-                  <div className="flex-1 min-w-0">
+                  <div className="flex-1 min-w-0 overflow-hidden">
                     <p className="text-xs font-medium truncate">{conv.title}</p>
                     <p className="text-[10px] text-muted-foreground mt-0.5">
                       {new Date(conv.updatedAt).toLocaleDateString()}
@@ -428,6 +487,20 @@ export default function Chat() {
             )}
           </div>
         </ScrollArea>
+
+        {/* Drag handle — sits on the sidebar's right edge. Mousedown captures
+            the start position + current width, then a window-level mousemove
+            updates width until mouseup. Width is persisted to localStorage so
+            the user's choice survives reloads. */}
+        <div
+          onMouseDown={startSidebarResize}
+          title="Drag to resize"
+          className={cn(
+            "absolute top-0 right-0 h-full w-1.5 cursor-col-resize z-10 transition-colors",
+            isResizingSidebar ? "bg-primary/50" : "hover:bg-primary/30"
+          )}
+          data-testid="sidebar-resize-handle"
+        />
       </aside>
 
       {/* Main chat area */}
