@@ -118,7 +118,7 @@ impl Engine {
         Ok(Self {
             backend,
             model: Arc::new(model),
-            ctx_size: 4096,
+            ctx_size: 8192,
         })
     }
 
@@ -140,6 +140,24 @@ impl Engine {
             .new_context(&self.backend, ctx_params)
             .context("failed to create llama context")?;
 
+        // Pre-flight char-length guard. `str_to_token` can abort the whole
+        // process (not just return an Err) when handed a multi-hundred-KB
+        // blob, because llama.cpp's C tokenizer has assertions that
+        // call abort() instead of returning. Refuse early so users with
+        // huge attachments see a clean error instead of the app vanishing.
+        // ~4 chars per token is a safe pessimistic English estimate; we
+        // allow 5x ctx_size of chars before bailing.
+        let char_budget = (self.ctx_size as usize).saturating_mul(5);
+        if prompt.len() > char_budget {
+            return Err(anyhow!(
+                "prompt is too long for this model: {} characters, limit is ~{} \
+                 (context window is {} tokens). Try removing or shrinking an attachment.",
+                prompt.len(),
+                char_budget,
+                self.ctx_size
+            ));
+        }
+
         // The frontend formats the full multi-turn conversation using each
         // model family's chat template, so we tokenize verbatim. `AddBos::Always`
         // prepends the model's BOS token automatically — the frontend MUST NOT
@@ -151,7 +169,8 @@ impl Engine {
 
         if tokens.len() as u32 >= self.ctx_size {
             return Err(anyhow!(
-                "prompt is longer than the model's context window ({} >= {})",
+                "prompt is longer than the model's context window ({} tokens, limit {}). \
+                 Try removing or shrinking an attachment, or starting a new chat.",
                 tokens.len(),
                 self.ctx_size
             ));
