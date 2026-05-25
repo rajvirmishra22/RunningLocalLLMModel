@@ -13,14 +13,14 @@ import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.mjs?url";
 pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUrl as string;
 
 /** Hard cap on extracted text per file — protects the model's context window. */
-// Per-attachment character budget. Kept small on purpose: the desktop runs
-// llama.cpp with an 8192-token context window, which is roughly 24-32k
-// characters of English. After accounting for system prompt + chat history +
-// the model's reply, a single attachment shouldn't burn more than ~3k tokens
-// (~12k chars). Larger uploads are truncated with a visible badge so the
-// user knows the rest didn't make it in. Going higher previously caused
-// llama.cpp to abort the process on massive prompts.
-export const MAX_CHARS = 12_000;
+// Per-attachment character budget. The desktop runs llama.cpp with a
+// 16384-token context window (~50-65k chars of English). We allow a single
+// attachment to consume up to ~48k chars (~12k tokens), which is enough for
+// a 10-15 page student assignment / paper. Larger uploads are truncated
+// with a visible badge so the user knows the rest didn't make it in.
+// Remaining tokens cover the system prompt, chat history, your typed
+// question, and the model's reply.
+export const MAX_CHARS = 48_000;
 
 /** Hard cap on raw file size accepted (50 MB). PDFs above this fail fast. */
 export const MAX_FILE_BYTES = 50 * 1024 * 1024;

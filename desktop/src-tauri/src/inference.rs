@@ -118,7 +118,12 @@ impl Engine {
         Ok(Self {
             backend,
             model: Arc::new(model),
-            ctx_size: 8192,
+            // 16K context — big enough to hold a 10-15 page student assignment
+            // plus a few turns of conversation. Goes up against KV-cache RAM
+            // cost: ~2 GB extra for an 8B model at 16K, ~500 MB for 1B/3B.
+            // 32K+ would be nicer but pushes 8B models past 16 GB of RAM
+            // on most laptops.
+            ctx_size: 16384,
         })
     }
 
