@@ -172,7 +172,7 @@ export default function Tuning() {
     setProfiles(updated);
     const justAdded = updated.find((p) => p.modelIdentifier === modelId);
     if (justAdded) setActiveProfileId(justAdded.id);
-    setApplyStatus(`Added "${model.label}". It will download on first chat.`);
+    setApplyStatus(`Added "${model.label}". Open Models to download the weights.`);
   }
 
   return (

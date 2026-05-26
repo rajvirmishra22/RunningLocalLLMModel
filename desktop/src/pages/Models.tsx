@@ -1,5 +1,16 @@
-import { useState, useEffect, useMemo } from "react";
-import { Plus, Trash2, Edit2, AlertCircle, Globe, Loader2, X } from "lucide-react";
+import { useState, useEffect, useMemo, useCallback } from "react";
+import {
+  Plus,
+  Trash2,
+  Edit2,
+  AlertCircle,
+  Globe,
+  Loader2,
+  X,
+  Download,
+  CheckCircle2,
+  HardDrive,
+} from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -21,8 +32,10 @@ import {
 import { storageService, ModelProfile } from "@/services/storageService";
 import {
   webllmService,
+  WEBLLM_MODELS,
   type WebLLMModel,
   type ModelFamily,
+  type InitProgress,
   isCustomCatalogSupported,
   getCatalog,
   listCustomModels,
@@ -51,6 +64,13 @@ const compatColors: Record<string, string> = {
   unsupported: "bg-red-500/10 text-red-500 border-red-500/20",
 };
 
+const BUNDLED_MODEL_ID = "Llama-3.2-1B-Instruct-q4f32_1-MLC";
+
+type DownloadState =
+  | { kind: "idle" }
+  | { kind: "downloading"; progress: number; text: string }
+  | { kind: "error"; message: string };
+
 export default function Models() {
   const [profiles, setProfiles] = useState<ModelProfile[]>([]);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -58,6 +78,10 @@ export default function Models() {
   const [form, setForm] = useState<Omit<ModelProfile, "id">>(EMPTY_PROFILE);
   const [customModels, setCustomModels] = useState<WebLLMModel[]>([]);
   const [customDialogOpen, setCustomDialogOpen] = useState(false);
+  const [downloadedIds, setDownloadedIds] = useState<Set<string>>(
+    () => new Set([BUNDLED_MODEL_ID]),
+  );
+  const [downloads, setDownloads] = useState<Record<string, DownloadState>>({});
   const webgpuAvailable = webllmService.checkWebGPU();
   const customSupported = isCustomCatalogSupported();
   const systemRamGb = useMemo(() => getSystemInfo().ram, []);
@@ -75,7 +99,19 @@ export default function Models() {
     setCustomModels(listCustomModels());
   };
 
-  useEffect(() => { loadData(); }, []);
+  const refreshDownloaded = useCallback(async () => {
+    try {
+      const list = await webllmService.listDownloaded();
+      setDownloadedIds(new Set(list));
+    } catch {
+      /* Rust side not ready yet — leave the current set in place. */
+    }
+  }, []);
+
+  useEffect(() => {
+    loadData();
+    void refreshDownloaded();
+  }, [refreshDownloaded]);
 
   const openAdd = () => {
     setEditingProfile(null);
@@ -89,7 +125,7 @@ export default function Models() {
     setDialogOpen(true);
   };
 
-  const handleDelete = (id: string) => {
+  const handleDeleteProfile = (id: string) => {
     storageService.deleteModelProfile(id);
     loadData();
   };
@@ -121,6 +157,7 @@ export default function Models() {
     }
     removeCustomModel(modelId);
     loadData();
+    await refreshDownloaded();
   };
 
   const addWebLLMModel = (model: WebLLMModel) => {
@@ -141,13 +178,73 @@ export default function Models() {
     loadData();
   };
 
+  const handleDownload = async (modelId: string) => {
+    setDownloads((s) => ({
+      ...s,
+      [modelId]: { kind: "downloading", progress: 0, text: "Starting…" },
+    }));
+    try {
+      await webllmService.downloadModel(modelId, (p: InitProgress) => {
+        setDownloads((s) => ({
+          ...s,
+          [modelId]: {
+            kind: "downloading",
+            progress: p.progress,
+            text: p.text,
+          },
+        }));
+      });
+      await refreshDownloaded();
+      setDownloads((s) => {
+        const next = { ...s };
+        delete next[modelId];
+        return next;
+      });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      // A user-cancelled download surfaces as a generic error string from the
+      // Rust side. Treat it as a quiet reset rather than a loud failure.
+      if (/cancel/i.test(msg)) {
+        setDownloads((s) => {
+          const next = { ...s };
+          delete next[modelId];
+          return next;
+        });
+      } else {
+        setDownloads((s) => ({
+          ...s,
+          [modelId]: { kind: "error", message: msg },
+        }));
+      }
+    }
+  };
+
+  const handleCancelDownload = async (modelId: string) => {
+    await webllmService.cancelDownload(modelId);
+  };
+
+  const handleDeleteWeights = async (modelId: string) => {
+    try {
+      await webllmService.deleteDownloaded(modelId);
+      await refreshDownloaded();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setDownloads((s) => ({
+        ...s,
+        [modelId]: { kind: "error", message: msg },
+      }));
+    }
+  };
+
   return (
     <div className="h-full overflow-y-auto">
       <div className="max-w-3xl mx-auto px-6 py-6 space-y-6">
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-xl font-semibold">Models</h1>
-            <p className="text-sm text-muted-foreground mt-0.5">Manage your in-browser model profiles</p>
+            <p className="text-sm text-muted-foreground mt-0.5">
+              Download chat models to run them locally — nothing leaves your machine.
+            </p>
           </div>
           <Button size="sm" onClick={openAdd} data-testid="btn-add-profile" className="gap-2">
             <Plus className="w-3.5 h-3.5" />
@@ -169,29 +266,45 @@ export default function Models() {
           <div className="flex items-center gap-2 mb-3">
             <Globe className="w-4 h-4 text-green-500" />
             <h2 className="text-sm font-semibold">Your Models</h2>
-            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-green-500/10 text-green-500 border border-green-500/20 font-medium">
-              No install needed
-            </span>
           </div>
 
           {profiles.length === 0 ? (
             <EmptyState message="No models added yet. Pick from the catalog below to get started." />
           ) : (
             <div className="space-y-2">
-              {profiles.map((profile) => (
-                <ProfileCard key={profile.id} profile={profile} onEdit={openEdit} onDelete={handleDelete} />
-              ))}
+              {profiles.map((profile) => {
+                const catalogEntry = WEBLLM_MODELS.find(
+                  (m) => m.id === profile.modelIdentifier,
+                );
+                const isBundled = profile.modelIdentifier === BUNDLED_MODEL_ID;
+                const isDownloaded = downloadedIds.has(profile.modelIdentifier);
+                return (
+                  <ProfileCard
+                    key={profile.id}
+                    profile={profile}
+                    catalogEntry={catalogEntry}
+                    isBundled={isBundled}
+                    isDownloaded={isDownloaded}
+                    downloadState={downloads[profile.modelIdentifier] ?? { kind: "idle" }}
+                    onEdit={openEdit}
+                    onDeleteProfile={handleDeleteProfile}
+                    onDownload={handleDownload}
+                    onCancelDownload={handleCancelDownload}
+                    onDeleteWeights={handleDeleteWeights}
+                  />
+                );
+              })}
             </div>
           )}
         </section>
 
         {/* Model Catalog */}
         <section>
-          <div className="flex items-end justify-between mb-1 gap-3">
+          <div className="flex items-end justify-between mb-3 gap-3">
             <div>
               <h2 className="text-sm font-semibold">Model Catalog</h2>
               <p className="text-xs text-muted-foreground mt-0.5">
-                Click Add to save a model to your profiles. The model file downloads when you first chat with it.
+                Click Add to save a model to your profiles, then Download to fetch the weights.
               </p>
             </div>
             {customSupported && (
@@ -212,6 +325,7 @@ export default function Models() {
               const added = profiles.some((p) => p.modelIdentifier === m.id);
               const tooBig =
                 customSupported && systemRamGb != null && m.minRamGb > systemRamGb;
+              const isBundled = m.id === BUNDLED_MODEL_ID;
               return (
                 <div
                   key={m.id}
@@ -220,6 +334,11 @@ export default function Models() {
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-1.5 flex-wrap">
                       <p className="text-xs font-semibold truncate">{m.label}</p>
+                      {isBundled && (
+                        <span className="text-[9px] px-1 py-px rounded bg-green-500/10 text-green-500 border border-green-500/20 font-medium">
+                          BUNDLED
+                        </span>
+                      )}
                       {m.custom && (
                         <span className="text-[9px] px-1 py-px rounded bg-primary/10 text-primary border border-primary/20 font-medium">
                           custom
@@ -299,7 +418,7 @@ export default function Models() {
             </div>
 
             <div className="space-y-1.5">
-              <Label className="text-xs">Browser Model</Label>
+              <Label className="text-xs">Model</Label>
               <Select value={form.modelIdentifier} onValueChange={(v) => setForm({ ...form, modelIdentifier: v })}>
                 <SelectTrigger className="h-8 text-sm" data-testid="select-webllm-model">
                   <SelectValue placeholder="Select a model" />
@@ -360,10 +479,39 @@ export default function Models() {
   );
 }
 
-function ProfileCard({ profile, onEdit, onDelete }: { profile: ModelProfile; onEdit: (p: ModelProfile) => void; onDelete: (id: string) => void }) {
+interface ProfileCardProps {
+  profile: ModelProfile;
+  catalogEntry: WebLLMModel | undefined;
+  isBundled: boolean;
+  isDownloaded: boolean;
+  downloadState: DownloadState;
+  onEdit: (p: ModelProfile) => void;
+  onDeleteProfile: (id: string) => void;
+  onDownload: (modelId: string) => void;
+  onCancelDownload: (modelId: string) => void;
+  onDeleteWeights: (modelId: string) => void;
+}
+
+function ProfileCard({
+  profile,
+  catalogEntry,
+  isBundled,
+  isDownloaded,
+  downloadState,
+  onEdit,
+  onDeleteProfile,
+  onDownload,
+  onCancelDownload,
+  onDeleteWeights,
+}: ProfileCardProps) {
+  const downloadable = !isBundled && catalogEntry?.url != null;
+  const sizeLabel = catalogEntry
+    ? `${(catalogEntry.sizeMb / 1000).toFixed(1)} GB`
+    : null;
+
   return (
     <Card data-testid={`profile-card-${profile.id}`} className="py-0">
-      <CardContent className="px-4 py-3">
+      <CardContent className="px-4 py-3 space-y-2">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2 flex-wrap">
@@ -372,25 +520,179 @@ function ProfileCard({ profile, onEdit, onDelete }: { profile: ModelProfile; onE
               <span className={`text-[10px] px-1.5 py-0.5 rounded border font-medium ${compatColors[profile.compatibility]}`}>
                 {profile.compatibility}
               </span>
+              <StatusBadge
+                isBundled={isBundled}
+                isDownloaded={isDownloaded}
+                downloadable={downloadable}
+                downloadState={downloadState}
+              />
             </div>
             <p className="text-xs font-mono text-muted-foreground mt-1 truncate">{profile.modelIdentifier}</p>
             <div className="flex items-center gap-3 mt-1.5 flex-wrap">
               <StatChip label="ctx" value={`${profile.contextLength}`} />
               <StatChip label="temp" value={`${profile.temperature}`} />
               <StatChip label="max_t" value={`${profile.maxTokens}`} />
+              {sizeLabel && <StatChip label="size" value={sizeLabel} />}
             </div>
           </div>
           <div className="flex items-center gap-1 flex-shrink-0">
-            <button onClick={() => onEdit(profile)} className="p-1.5 rounded-md hover:bg-muted transition-colors" data-testid={`btn-edit-${profile.id}`}>
+            <button
+              onClick={() => onEdit(profile)}
+              className="p-1.5 rounded-md hover:bg-muted transition-colors"
+              data-testid={`btn-edit-${profile.id}`}
+              title="Edit profile"
+            >
               <Edit2 className="w-3.5 h-3.5 text-muted-foreground" />
             </button>
-            <button onClick={() => onDelete(profile.id)} className="p-1.5 rounded-md hover:bg-destructive/10 hover:text-destructive transition-colors" data-testid={`btn-delete-${profile.id}`}>
+            <button
+              onClick={() => onDeleteProfile(profile.id)}
+              className="p-1.5 rounded-md hover:bg-destructive/10 hover:text-destructive transition-colors"
+              data-testid={`btn-delete-${profile.id}`}
+              title="Remove this profile (keeps the model on disk)"
+            >
               <Trash2 className="w-3.5 h-3.5 text-muted-foreground" />
             </button>
           </div>
         </div>
+
+        {/* Download / delete-weights row */}
+        {downloadable && (
+          <div className="pt-1">
+            {downloadState.kind === "downloading" ? (
+              <DownloadProgressBar
+                progress={downloadState.progress}
+                text={downloadState.text}
+                onCancel={() => onCancelDownload(profile.modelIdentifier)}
+                testId={`download-progress-${profile.id}`}
+              />
+            ) : downloadState.kind === "error" ? (
+              <div className="flex items-center justify-between gap-2 p-2 rounded-md bg-red-500/10 border border-red-500/20">
+                <div className="flex items-center gap-1.5 min-w-0">
+                  <AlertCircle className="w-3.5 h-3.5 text-red-500 flex-shrink-0" />
+                  <p className="text-[11px] text-red-500 truncate">{downloadState.message}</p>
+                </div>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-6 text-[10px] px-2 flex-shrink-0"
+                  onClick={() => onDownload(profile.modelIdentifier)}
+                  data-testid={`btn-retry-download-${profile.id}`}
+                >
+                  Retry
+                </Button>
+              </div>
+            ) : isDownloaded ? (
+              <div className="flex items-center justify-end gap-2">
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-7 text-[11px] px-2 gap-1.5 text-muted-foreground hover:text-destructive"
+                  onClick={() => onDeleteWeights(profile.modelIdentifier)}
+                  data-testid={`btn-delete-weights-${profile.id}`}
+                  title="Delete the downloaded weights to free disk space"
+                >
+                  <HardDrive className="w-3 h-3" />
+                  Delete weights
+                </Button>
+              </div>
+            ) : (
+              <div className="flex items-center justify-end gap-2">
+                <Button
+                  size="sm"
+                  className="h-7 text-[11px] px-2.5 gap-1.5"
+                  onClick={() => onDownload(profile.modelIdentifier)}
+                  data-testid={`btn-download-${profile.id}`}
+                >
+                  <Download className="w-3 h-3" />
+                  Download {sizeLabel ? `(${sizeLabel})` : ""}
+                </Button>
+              </div>
+            )}
+          </div>
+        )}
       </CardContent>
     </Card>
+  );
+}
+
+function StatusBadge({
+  isBundled,
+  isDownloaded,
+  downloadable,
+  downloadState,
+}: {
+  isBundled: boolean;
+  isDownloaded: boolean;
+  downloadable: boolean;
+  downloadState: DownloadState;
+}) {
+  if (isBundled) {
+    return (
+      <span className="text-[10px] px-1.5 py-0.5 rounded border bg-green-500/10 text-green-500 border-green-500/20 font-medium">
+        Bundled
+      </span>
+    );
+  }
+  if (downloadState.kind === "downloading") {
+    return (
+      <span className="text-[10px] px-1.5 py-0.5 rounded border bg-primary/10 text-primary border-primary/20 font-medium">
+        Downloading
+      </span>
+    );
+  }
+  if (isDownloaded) {
+    return (
+      <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded border bg-green-500/10 text-green-500 border-green-500/20 font-medium">
+        <CheckCircle2 className="w-2.5 h-2.5" />
+        Downloaded
+      </span>
+    );
+  }
+  if (downloadable) {
+    return (
+      <span className="text-[10px] px-1.5 py-0.5 rounded border bg-muted/40 text-muted-foreground border-border font-medium">
+        Not downloaded
+      </span>
+    );
+  }
+  return null;
+}
+
+function DownloadProgressBar({
+  progress,
+  text,
+  onCancel,
+  testId,
+}: {
+  progress: number;
+  text: string;
+  onCancel: () => void;
+  testId: string;
+}) {
+  const pct = Math.max(0, Math.min(100, Math.round(progress * 100)));
+  return (
+    <div className="space-y-1.5" data-testid={testId}>
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-[11px] text-muted-foreground truncate flex-1">{text}</p>
+        <span className="text-[10px] font-mono text-muted-foreground tabular-nums">
+          {pct}%
+        </span>
+        <button
+          onClick={onCancel}
+          className="p-1 rounded-md hover:bg-destructive/10 hover:text-destructive transition-colors"
+          title="Cancel download"
+          data-testid={`${testId}-cancel`}
+        >
+          <X className="w-3 h-3" />
+        </button>
+      </div>
+      <div className="h-1 w-full rounded-full bg-muted overflow-hidden">
+        <div
+          className="h-full bg-primary transition-all"
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+    </div>
   );
 }
 

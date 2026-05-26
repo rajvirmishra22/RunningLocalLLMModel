@@ -60,15 +60,17 @@ Until that's set, the landing page shows "WINDOWS .EXE — COMING SOON" as a dis
 
 ### Updating the desktop UI
 
-Edit the web app (`artifacts/localmodel-studio/src/`) and re-copy into `desktop/src/`, **preserving the two desktop-only overlay files**: `services/webllmService.ts` and `services/rag/ragBackend.ts`. From the repo root:
+Edit the web app (`artifacts/localmodel-studio/src/`) and re-copy into `desktop/src/`, **preserving the desktop-only overlay files**: `services/webllmService.ts`, `services/rag/ragBackend.ts`, and `pages/Models.tsx` (the desktop Models page has download / cancel / delete-weights UI for non-bundled GGUFs that doesn't exist in the web build). From the repo root:
 
 ```bash
-# Save the two Tauri shims, sync, restore.
+# Save the Tauri overlays, sync, restore.
 cp desktop/src/services/webllmService.ts /tmp/webllmService.desktop.ts
 cp desktop/src/services/rag/ragBackend.ts /tmp/ragBackend.desktop.ts
+cp desktop/src/pages/Models.tsx /tmp/Models.desktop.tsx
 cp -r artifacts/localmodel-studio/src/. desktop/src/
 cp /tmp/webllmService.desktop.ts desktop/src/services/webllmService.ts
 cp /tmp/ragBackend.desktop.ts desktop/src/services/rag/ragBackend.ts
+cp /tmp/Models.desktop.tsx desktop/src/pages/Models.tsx
 ```
 
 This is by design — desktop is outside the pnpm workspace, so we can't import the web's source directly. Keeping them in sync via copy + two overlays is the simplest contract.
