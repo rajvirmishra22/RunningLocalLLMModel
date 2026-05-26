@@ -6,7 +6,7 @@ mod embeddings;
 mod inference;
 mod rag_store;
 
-use download::{DownloadRegistry, DownloadedModel};
+use download::{DownloadRegistry, DownloadedModel, ProbeResult};
 use embeddings::EmbedEngine;
 use inference::Engine;
 use parking_lot::Mutex;
@@ -177,6 +177,14 @@ async fn download_model(
 #[tauri::command]
 fn cancel_download(state: State<'_, AppState>, model_id: String) {
     state.downloads.cancel(&model_id);
+}
+
+/// HEAD a URL and return its size — used by the UI before adding a custom
+/// Hugging Face model so the user can see the real download size and
+/// whether it'll fit in RAM.
+#[tauri::command]
+async fn probe_model_url(url: String) -> Result<ProbeResult, String> {
+    download::probe(url).await.map_err(|e| format!("{e:#}"))
 }
 
 #[tauri::command]
@@ -420,6 +428,7 @@ fn main() {
             cancel_chat,
             download_model,
             cancel_download,
+            probe_model_url,
             list_downloaded_models,
             delete_downloaded_model,
             embed_status,

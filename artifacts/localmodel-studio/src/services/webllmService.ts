@@ -1,11 +1,21 @@
 import * as webllm from "@mlc-ai/web-llm";
 
+/**
+ * Kept in lockstep with the desktop overlay so the shared Models.tsx UI
+ * compiles unchanged. On the web build the family field is informational —
+ * WebLLM uses its own bundled chat template per MLC model id.
+ */
+export type ModelFamily = "llama3" | "qwen" | "phi3" | "mistral";
+
 export interface WebLLMModel {
   id: string;
   label: string;
   sizeMb: number;
   description: string;
   minRamGb: number;
+  family?: ModelFamily;
+  url?: string | null;
+  custom?: boolean;
 }
 
 export const WEBLLM_MODELS: WebLLMModel[] = [
@@ -65,6 +75,60 @@ export interface InitProgress {
   progress: number; // 0-1
 }
 
+// ---------------------------------------------------------------------------
+// Custom-catalog API — desktop-only feature. Stubbed here so the shared
+// Models.tsx UI compiles for the web build. The UI gates the custom-model
+// section on `isCustomCatalogSupported()`, so these throwers never run in
+// practice.
+// ---------------------------------------------------------------------------
+
+export interface AddCustomModelInput {
+  label: string;
+  url: string;
+  sizeMb: number;
+  minRamGb: number;
+  family: ModelFamily;
+  description?: string;
+}
+
+export interface ProbeResult {
+  sizeBytes: number;
+  contentType: string | null;
+  finalUrl: string;
+}
+
+export function isCustomCatalogSupported(): boolean {
+  return false;
+}
+
+export function getCatalog(): WebLLMModel[] {
+  return WEBLLM_MODELS;
+}
+
+export function listCustomModels(): WebLLMModel[] {
+  return [];
+}
+
+export function detectFamily(_text: string): ModelFamily {
+  return "llama3";
+}
+
+export function addCustomModel(_input: AddCustomModelInput): WebLLMModel {
+  throw new Error(
+    "Custom Hugging Face models are only supported in the desktop app.",
+  );
+}
+
+export function removeCustomModel(_modelId: string): void {
+  /* no-op on web */
+}
+
+export async function probeModelUrl(_url: string): Promise<ProbeResult> {
+  throw new Error(
+    "Probing remote model URLs is only supported in the desktop app.",
+  );
+}
+
 type EngineCache = {
   engine: webllm.MLCEngine;
   modelId: string;
@@ -79,6 +143,16 @@ export const webllmService = {
 
   getLoadedModelId(): string | null {
     return engineCache?.modelId ?? null;
+  },
+
+  /**
+   * Web stub for the desktop overlay's `deleteDownloaded`. The web build
+   * caches model weights in IndexedDB via WebLLM, not as discrete files we
+   * own; the Models UI calls this when removing a custom catalog entry but
+   * on web there's nothing for us to clean up here.
+   */
+  async deleteDownloaded(_modelId: string): Promise<void> {
+    /* no-op on web */
   },
 
   async loadModel(

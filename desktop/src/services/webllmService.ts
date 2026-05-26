@@ -29,6 +29,8 @@ export interface WebLLMModel {
    * with the installer and never needs to be downloaded.
    */
   url: string | null;
+  /** True for user-added Hugging Face models (vs the built-in catalog). */
+  custom?: boolean;
 }
 
 /**
@@ -128,9 +130,143 @@ interface RustDownloadedModel {
 /** The id of the single model we actually bundle with the installer. */
 const BUNDLED_MODEL_ID = "Llama-3.2-1B-Instruct-q4f32_1-MLC";
 
+// ---------------------------------------------------------------------------
+// Custom catalog — user-added Hugging Face GGUF URLs.
+//
+// Persisted in localStorage (one machine, never synced) so the catalog
+// survives reloads but doesn't pretend to be a cloud library. The chat /
+// download / load code paths look models up via getModelById, so adding to
+// this list is enough to make a custom model fully usable everywhere.
+// ---------------------------------------------------------------------------
+
+const CUSTOM_MODELS_KEY = "lms.custom_models.v1";
+
+function loadCustomModels(): WebLLMModel[] {
+  if (typeof localStorage === "undefined") return [];
+  try {
+    const raw = localStorage.getItem(CUSTOM_MODELS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((m) => m && typeof m === "object" && typeof m.id === "string")
+      .map((m) => ({ ...m, custom: true }) as WebLLMModel);
+  } catch {
+    return [];
+  }
+}
+
+function saveCustomModels(list: WebLLMModel[]): void {
+  if (typeof localStorage === "undefined") return;
+  localStorage.setItem(CUSTOM_MODELS_KEY, JSON.stringify(list));
+}
+
+/** Sanitize a free-form name into something safe for use as a model id. */
+function sanitizeId(input: string): string {
+  return input
+    .replace(/\s+/g, "-")
+    .replace(/[^a-zA-Z0-9._-]/g, "_")
+    .slice(0, 80) || `custom-${Date.now()}`;
+}
+
+/** Best-effort family detection from a model id / filename / repo. */
+export function detectFamily(text: string): ModelFamily {
+  const s = text.toLowerCase();
+  if (s.includes("qwen")) return "qwen";
+  if (s.includes("phi")) return "phi3";
+  if (s.includes("mistral") || s.includes("mixtral")) return "mistral";
+  // Llama 3.x uses the header-token template; older Llama 2 doesn't, but
+  // Llama-2 GGUFs are rare enough today that defaulting to llama3 is the
+  // pragmatic choice. Users can fix it via the family selector in the UI.
+  return "llama3";
+}
+
+/** True iff this build supports user-added Hugging Face models. */
+export function isCustomCatalogSupported(): boolean {
+  return true;
+}
+
+export function listCustomModels(): WebLLMModel[] {
+  return loadCustomModels();
+}
+
+/** Built-in + user-added catalog, in display order. */
+export function getCatalog(): WebLLMModel[] {
+  return [...WEBLLM_MODELS, ...loadCustomModels()];
+}
+
+export interface AddCustomModelInput {
+  label: string;
+  url: string;
+  sizeMb: number;
+  minRamGb: number;
+  family: ModelFamily;
+  description?: string;
+}
+
+export function addCustomModel(input: AddCustomModelInput): WebLLMModel {
+  const label = input.label.trim();
+  if (!label) throw new Error("Model name is required.");
+  const url = input.url.trim();
+  if (!/^https?:\/\//i.test(url)) {
+    throw new Error("URL must start with http:// or https://");
+  }
+
+  const list = loadCustomModels();
+  // Collision-proof id: base on label, suffix if needed.
+  let id = sanitizeId(label);
+  if (getCatalog().some((m) => m.id === id)) {
+    id = `${id}-${Date.now().toString(36)}`;
+  }
+
+  const model: WebLLMModel = {
+    id,
+    label,
+    sizeMb: Math.max(1, Math.round(input.sizeMb)),
+    description:
+      input.description?.trim() ||
+      `Custom model from ${tryHostname(url) ?? "Hugging Face"}.`,
+    minRamGb: Math.max(1, Math.round(input.minRamGb)),
+    family: input.family,
+    url,
+    custom: true,
+  };
+  list.push(model);
+  saveCustomModels(list);
+  return model;
+}
+
+export function removeCustomModel(modelId: string): void {
+  const list = loadCustomModels().filter((m) => m.id !== modelId);
+  saveCustomModels(list);
+}
+
+function tryHostname(url: string): string | null {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return null;
+  }
+}
+
+export interface ProbeResult {
+  sizeBytes: number;
+  contentType: string | null;
+  finalUrl: string;
+}
+
+/**
+ * Probe a remote GGUF URL (HEAD, falling back to a 1-byte ranged GET) so the
+ * UI can show the real download size and warn if it won't fit in RAM before
+ * the user commits.
+ */
+export async function probeModelUrl(url: string): Promise<ProbeResult> {
+  return invoke<ProbeResult>("probe_model_url", { url });
+}
+
 /** On disk the bundled model is referenced by its sanitized id. */
 function getModelById(modelId: string): WebLLMModel | undefined {
-  return WEBLLM_MODELS.find((m) => m.id === modelId);
+  return getCatalog().find((m) => m.id === modelId);
 }
 
 /** Stop strings the Rust generation loop should break on. */

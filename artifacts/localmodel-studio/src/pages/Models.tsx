@@ -1,5 +1,5 @@
-import { useState, useEffect } from "react";
-import { Plus, Trash2, Edit2, AlertCircle, Globe } from "lucide-react";
+import { useState, useEffect, useMemo } from "react";
+import { Plus, Trash2, Edit2, AlertCircle, Globe, Loader2, X } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -19,7 +19,19 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { storageService, ModelProfile } from "@/services/storageService";
-import { webllmService, WEBLLM_MODELS } from "@/services/webllmService";
+import {
+  webllmService,
+  type WebLLMModel,
+  type ModelFamily,
+  isCustomCatalogSupported,
+  getCatalog,
+  listCustomModels,
+  addCustomModel,
+  removeCustomModel,
+  probeModelUrl,
+  detectFamily,
+} from "@/services/webllmService";
+import { getSystemInfo } from "@/services/systemInfo";
 
 const EMPTY_PROFILE: Omit<ModelProfile, "id"> = {
   name: "",
@@ -44,10 +56,23 @@ export default function Models() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingProfile, setEditingProfile] = useState<ModelProfile | null>(null);
   const [form, setForm] = useState<Omit<ModelProfile, "id">>(EMPTY_PROFILE);
+  const [customModels, setCustomModels] = useState<WebLLMModel[]>([]);
+  const [customDialogOpen, setCustomDialogOpen] = useState(false);
   const webgpuAvailable = webllmService.checkWebGPU();
+  const customSupported = isCustomCatalogSupported();
+  const systemRamGb = useMemo(() => getSystemInfo().ram, []);
+  // Everything the Catalog / profile-edit dialog renders comes from the
+  // merged list so user-added Hugging Face models behave like first-class
+  // entries everywhere they're referenced.
+  const fullCatalog = useMemo(
+    () => getCatalog(),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [customModels],
+  );
 
   const loadData = () => {
     setProfiles(storageService.getModelProfiles());
+    setCustomModels(listCustomModels());
   };
 
   useEffect(() => { loadData(); }, []);
@@ -80,7 +105,25 @@ export default function Models() {
     loadData();
   };
 
-  const addWebLLMModel = (model: typeof WEBLLM_MODELS[0]) => {
+  const handleDeleteCustom = async (modelId: string) => {
+    // Delete any local profile pointing at this custom model too — otherwise
+    // the user is left with a profile that references a non-existent id.
+    const orphans = profiles.filter((p) => p.modelIdentifier === modelId);
+    for (const p of orphans) {
+      storageService.deleteModelProfile(p.id);
+    }
+    // If it's been downloaded, drop the GGUF as well so we don't leave 4 GB
+    // of weights on disk for a model the user just removed from the catalog.
+    try {
+      await webllmService.deleteDownloaded(modelId);
+    } catch {
+      /* not downloaded — fine */
+    }
+    removeCustomModel(modelId);
+    loadData();
+  };
+
+  const addWebLLMModel = (model: WebLLMModel) => {
     const exists = profiles.some((p) => p.modelIdentifier === model.id);
     if (exists) return;
     storageService.saveModelProfile({
@@ -144,38 +187,96 @@ export default function Models() {
 
         {/* Model Catalog */}
         <section>
-          <h2 className="text-sm font-semibold mb-1">Model Catalog</h2>
-          <p className="text-xs text-muted-foreground mb-3">
-            Click Add to save a model to your profiles. The model file downloads when you first chat with it.
-          </p>
+          <div className="flex items-end justify-between mb-1 gap-3">
+            <div>
+              <h2 className="text-sm font-semibold">Model Catalog</h2>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Click Add to save a model to your profiles. The model file downloads when you first chat with it.
+              </p>
+            </div>
+            {customSupported && (
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-7 text-[11px] px-2.5 flex-shrink-0 gap-1.5"
+                onClick={() => setCustomDialogOpen(true)}
+                data-testid="btn-open-add-custom"
+              >
+                <Plus className="w-3 h-3" />
+                Add from Hugging Face
+              </Button>
+            )}
+          </div>
           <div className="grid grid-cols-2 gap-2">
-            {WEBLLM_MODELS.map((m) => {
+            {fullCatalog.map((m) => {
               const added = profiles.some((p) => p.modelIdentifier === m.id);
+              const tooBig =
+                customSupported && systemRamGb != null && m.minRamGb > systemRamGb;
               return (
                 <div
                   key={m.id}
                   className="flex items-center justify-between p-3 rounded-md border border-border"
                 >
                   <div className="min-w-0 flex-1">
-                    <p className="text-xs font-semibold">{m.label}</p>
-                    <p className="text-[10px] text-muted-foreground mt-0.5">{(m.sizeMb / 1000).toFixed(1)} GB · {m.description}</p>
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <p className="text-xs font-semibold truncate">{m.label}</p>
+                      {m.custom && (
+                        <span className="text-[9px] px-1 py-px rounded bg-primary/10 text-primary border border-primary/20 font-medium">
+                          custom
+                        </span>
+                      )}
+                      {tooBig && (
+                        <span
+                          className="text-[9px] px-1 py-px rounded bg-yellow-500/10 text-yellow-500 border border-yellow-500/20 font-medium"
+                          title={`Recommends ${m.minRamGb} GB RAM; this device reports ~${systemRamGb} GB.`}
+                        >
+                          may not fit
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-[10px] text-muted-foreground mt-0.5">
+                      {(m.sizeMb / 1000).toFixed(1)} GB · {m.description}
+                    </p>
                   </div>
-                  <Button
-                    size="sm"
-                    variant={added ? "outline" : "default"}
-                    className="h-7 text-[11px] px-2.5 flex-shrink-0 ml-2"
-                    disabled={added}
-                    onClick={() => addWebLLMModel(m)}
-                    data-testid={`btn-add-webllm-${m.id}`}
-                  >
-                    {added ? "Added" : "Add"}
-                  </Button>
+                  <div className="flex items-center gap-1 ml-2 flex-shrink-0">
+                    <Button
+                      size="sm"
+                      variant={added ? "outline" : "default"}
+                      className="h-7 text-[11px] px-2.5"
+                      disabled={added}
+                      onClick={() => addWebLLMModel(m)}
+                      data-testid={`btn-add-webllm-${m.id}`}
+                    >
+                      {added ? "Added" : "Add"}
+                    </Button>
+                    {m.custom && (
+                      <button
+                        onClick={() => void handleDeleteCustom(m.id)}
+                        className="p-1 rounded hover:bg-destructive/10 hover:text-destructive text-muted-foreground transition-colors"
+                        title="Remove this custom model from the catalog"
+                        data-testid={`btn-remove-custom-${m.id}`}
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
                 </div>
               );
             })}
           </div>
         </section>
       </div>
+
+      <AddCustomModelDialog
+        open={customDialogOpen}
+        onOpenChange={setCustomDialogOpen}
+        existingIds={fullCatalog.map((m) => m.id)}
+        systemRamGb={systemRamGb}
+        onAdded={() => {
+          loadData();
+          setCustomDialogOpen(false);
+        }}
+      />
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent className="max-w-md">
@@ -204,9 +305,9 @@ export default function Models() {
                   <SelectValue placeholder="Select a model" />
                 </SelectTrigger>
                 <SelectContent>
-                  {WEBLLM_MODELS.map((m) => (
+                  {fullCatalog.map((m) => (
                     <SelectItem key={m.id} value={m.id} className="text-xs">
-                      {m.label} ({(m.sizeMb / 1000).toFixed(1)} GB)
+                      {m.label} ({(m.sizeMb / 1000).toFixed(1)} GB){m.custom ? " · custom" : ""}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -298,6 +399,269 @@ function StatChip({ label, value }: { label: string; value: string }) {
     <span className="text-[10px] font-mono text-muted-foreground">
       <span className="text-muted-foreground/60">{label}=</span>{value}
     </span>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Add-from-Hugging-Face dialog
+//
+// Two-step flow: paste a .gguf URL → "Check" runs a Rust HEAD probe to get
+// the real Content-Length so we can show the actual download size and warn
+// if the model is unlikely to fit in RAM, then the user confirms the
+// auto-filled name / family / sizing.
+// ---------------------------------------------------------------------------
+
+interface AddCustomDialogProps {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  existingIds: string[];
+  systemRamGb: number | null;
+  onAdded: () => void;
+}
+
+function deriveLabelFromUrl(url: string): string {
+  try {
+    const u = new URL(url);
+    const last = u.pathname.split("/").filter(Boolean).pop() ?? "";
+    return last.replace(/\.gguf$/i, "").replace(/[._-]+/g, " ").trim();
+  } catch {
+    return "";
+  }
+}
+
+function suggestMinRamGb(sizeMb: number): number {
+  // Rule of thumb for Q4-quantised GGUFs: ~1.3x model weight in RAM for
+  // weights + KV cache + headroom. Round up to the nearest GB.
+  return Math.max(2, Math.ceil((sizeMb * 1.3) / 1024));
+}
+
+function AddCustomModelDialog({
+  open,
+  onOpenChange,
+  existingIds,
+  systemRamGb,
+  onAdded,
+}: AddCustomDialogProps) {
+  const [url, setUrl] = useState("");
+  const [label, setLabel] = useState("");
+  const [family, setFamily] = useState<ModelFamily>("llama3");
+  const [sizeMb, setSizeMb] = useState<number | null>(null);
+  const [minRamGb, setMinRamGb] = useState<number>(4);
+  const [description, setDescription] = useState("");
+  const [probing, setProbing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [probed, setProbed] = useState(false);
+
+  useEffect(() => {
+    if (!open) {
+      // Reset everything when the dialog closes so the next open starts fresh.
+      setUrl("");
+      setLabel("");
+      setFamily("llama3");
+      setSizeMb(null);
+      setMinRamGb(4);
+      setDescription("");
+      setProbing(false);
+      setError(null);
+      setProbed(false);
+    }
+  }, [open]);
+
+  const trimmedUrl = url.trim();
+  const looksLikeGguf = /\.gguf(\?|$)/i.test(trimmedUrl);
+  const urlValid = /^https?:\/\//i.test(trimmedUrl);
+  const sizeGb = sizeMb != null ? sizeMb / 1024 : null;
+  const tooBigForRam =
+    systemRamGb != null && sizeGb != null && minRamGb > systemRamGb;
+  const duplicateLabel =
+    label.trim().length > 0 &&
+    existingIds.some(
+      (id) => id.toLowerCase() === label.trim().toLowerCase().replace(/\s+/g, "-"),
+    );
+
+  const handleProbe = async () => {
+    setError(null);
+    setProbing(true);
+    try {
+      const result = await probeModelUrl(trimmedUrl);
+      if (result.sizeBytes === 0) {
+        // Some mirrors omit Content-Length entirely. We still let the user
+        // proceed but warn that we can't pre-check the size.
+        setError(
+          "Couldn't determine the file size from the server. You can still add it, but the download progress bar may show 'unknown' size.",
+        );
+      }
+      const mb = Math.round(result.sizeBytes / (1024 * 1024));
+      setSizeMb(mb);
+      setMinRamGb(suggestMinRamGb(mb || 1));
+      if (!label) setLabel(deriveLabelFromUrl(result.finalUrl) || deriveLabelFromUrl(trimmedUrl));
+      setFamily(detectFamily(result.finalUrl || trimmedUrl));
+      setProbed(true);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setProbing(false);
+    }
+  };
+
+  const handleSave = () => {
+    setError(null);
+    try {
+      addCustomModel({
+        label: label.trim(),
+        url: trimmedUrl,
+        sizeMb: sizeMb ?? 0,
+        minRamGb,
+        family,
+        description: description.trim() || undefined,
+      });
+      onAdded();
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  const canSave =
+    urlValid && label.trim().length > 0 && sizeMb != null && !duplicateLabel;
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle className="text-sm font-semibold">Add a model from Hugging Face</DialogTitle>
+        </DialogHeader>
+
+        <div className="space-y-3 py-1">
+          <div className="space-y-1.5">
+            <Label className="text-xs">GGUF file URL</Label>
+            <div className="flex gap-2">
+              <Input
+                value={url}
+                onChange={(e) => {
+                  setUrl(e.target.value);
+                  setProbed(false);
+                  setSizeMb(null);
+                }}
+                placeholder="https://huggingface.co/.../model.Q4_K_M.gguf"
+                className="h-8 text-sm font-mono"
+                data-testid="input-custom-url"
+              />
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-8 px-3 text-xs flex-shrink-0"
+                disabled={!urlValid || probing}
+                onClick={() => void handleProbe()}
+                data-testid="btn-probe-url"
+              >
+                {probing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "Check"}
+              </Button>
+            </div>
+            <p className="text-[10px] text-muted-foreground">
+              Paste any public Hugging Face GGUF URL (the <span className="font-mono">resolve/main/…</span> link
+              from a repo's Files tab). Click Check to fetch its size.
+            </p>
+            {urlValid && !looksLikeGguf && (
+              <p className="text-[10px] text-yellow-500">
+                This URL doesn't end in .gguf — make sure it points at a GGUF file, not the model card page.
+              </p>
+            )}
+          </div>
+
+          {probed && sizeMb != null && (
+            <div className="rounded-md border border-border p-3 space-y-2 bg-muted/30">
+              <div className="flex items-center justify-between text-[11px]">
+                <span className="text-muted-foreground">Download size</span>
+                <span className="font-mono font-medium">
+                  {sizeMb > 0 ? `${(sizeMb / 1024).toFixed(2)} GB` : "unknown"}
+                </span>
+              </div>
+              {tooBigForRam && (
+                <div className="flex items-start gap-2 text-[10px] text-yellow-500 bg-yellow-500/10 border border-yellow-500/20 rounded p-2">
+                  <AlertCircle className="w-3 h-3 mt-0.5 flex-shrink-0" />
+                  <span>
+                    This model recommends {minRamGb} GB RAM, but this device reports ~{systemRamGb} GB.
+                    It may run slowly or fail to load.
+                  </span>
+                </div>
+              )}
+            </div>
+          )}
+
+          <div className="space-y-1.5">
+            <Label className="text-xs">Display name</Label>
+            <Input
+              value={label}
+              onChange={(e) => setLabel(e.target.value)}
+              placeholder="e.g. Llama 3.1 8B (my fine-tune)"
+              className="h-8 text-sm"
+              data-testid="input-custom-label"
+            />
+            {duplicateLabel && (
+              <p className="text-[10px] text-destructive">A model with this name already exists.</p>
+            )}
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label className="text-xs">Chat template</Label>
+              <Select value={family} onValueChange={(v) => setFamily(v as ModelFamily)}>
+                <SelectTrigger className="h-8 text-sm" data-testid="select-custom-family">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="llama3">Llama 3 / 3.1 / 3.2</SelectItem>
+                  <SelectItem value="qwen">Qwen / ChatML</SelectItem>
+                  <SelectItem value="phi3">Phi 3 / 3.5</SelectItem>
+                  <SelectItem value="mistral">Mistral (INST)</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">RAM needed (GB)</Label>
+              <Input
+                type="number"
+                min="1"
+                value={minRamGb}
+                onChange={(e) => setMinRamGb(Math.max(1, Number(e.target.value) || 1))}
+                className="h-8 text-sm"
+                data-testid="input-custom-min-ram"
+              />
+            </div>
+          </div>
+
+          <div className="space-y-1.5">
+            <Label className="text-xs">Description (optional)</Label>
+            <Input
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder="What's this model good at?"
+              className="h-8 text-sm"
+              data-testid="input-custom-description"
+            />
+          </div>
+
+          {error && (
+            <div className="flex items-start gap-2 text-[11px] text-destructive bg-destructive/10 border border-destructive/20 rounded p-2">
+              <AlertCircle className="w-3 h-3 mt-0.5 flex-shrink-0" />
+              <span>{error}</span>
+            </div>
+          )}
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" size="sm" onClick={() => onOpenChange(false)}>Cancel</Button>
+          <Button
+            size="sm"
+            onClick={handleSave}
+            disabled={!canSave}
+            data-testid="btn-save-custom-model"
+          >
+            Add to catalog
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

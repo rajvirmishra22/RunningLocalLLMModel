@@ -120,6 +120,77 @@ pub fn list_downloaded(app: &AppHandle) -> Result<Vec<DownloadedModel>> {
     Ok(out)
 }
 
+#[derive(Serialize, Clone)]
+pub struct ProbeResult {
+    #[serde(rename = "sizeBytes")]
+    pub size_bytes: u64,
+    #[serde(rename = "contentType")]
+    pub content_type: Option<String>,
+    /// Final URL after any redirects (HF often 302s to a CDN).
+    #[serde(rename = "finalUrl")]
+    pub final_url: String,
+}
+
+/// HEAD the given URL (following redirects) and return Content-Length so the
+/// UI can show the user the real download size for a pasted Hugging Face URL
+/// before they commit to fetching it. Falls back to a ranged GET for servers
+/// that don't reply to HEAD.
+pub async fn probe(url: String) -> Result<ProbeResult> {
+    let client = reqwest::Client::builder()
+        .user_agent("LocalModelStudio/0.1")
+        .connect_timeout(Duration::from_secs(15))
+        .build()
+        .context("failed to build http client")?;
+
+    let try_request = |method: reqwest::Method, range: bool| {
+        let mut req = client.request(method, &url);
+        if range {
+            req = req.header(reqwest::header::RANGE, "bytes=0-0");
+        }
+        req
+    };
+
+    let mut resp = try_request(reqwest::Method::HEAD, false)
+        .send()
+        .await
+        .with_context(|| format!("HEAD {url} failed"))?;
+
+    // Some CDNs (incl. some HF mirrors) reject HEAD or return 405. Fall back
+    // to a 1-byte ranged GET — almost universally honoured.
+    if !resp.status().is_success() && !resp.status().is_redirection() {
+        resp = try_request(reqwest::Method::GET, true)
+            .send()
+            .await
+            .with_context(|| format!("ranged GET {url} failed"))?;
+    }
+
+    if !resp.status().is_success() && resp.status() != reqwest::StatusCode::PARTIAL_CONTENT {
+        return Err(anyhow!("probe failed: HTTP {}", resp.status()));
+    }
+
+    // For 206 responses, Content-Length is the range length (1), not the
+    // file size — read Content-Range total instead.
+    let size_bytes = if resp.status() == reqwest::StatusCode::PARTIAL_CONTENT {
+        resp.headers()
+            .get(reqwest::header::CONTENT_RANGE)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|s| s.rsplit('/').next())
+            .and_then(|s| s.parse::<u64>().ok())
+            .unwrap_or(0)
+    } else {
+        resp.content_length().unwrap_or(0)
+    };
+
+    let content_type = resp
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+    let final_url = resp.url().to_string();
+
+    Ok(ProbeResult { size_bytes, content_type, final_url })
+}
+
 /// Delete a downloaded model. No-op if it isn't there.
 pub fn delete(app: &AppHandle, model_id: &str) -> Result<()> {
     let path = model_path(app, model_id)?;

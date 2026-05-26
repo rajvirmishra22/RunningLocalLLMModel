@@ -108,8 +108,13 @@ function migrateProfiles(raw: unknown): ModelProfile[] {
   for (const p of raw as LegacyProfile[]) {
     if (!p || typeof p !== "object" || !p.id || !p.modelIdentifier) continue;
 
-    // Already a valid webllm profile
-    if (p.runtimeType === "webllm" && VALID_WEBLLM_IDS.has(p.modelIdentifier)) {
+    // Already a valid webllm profile. We accept either a built-in catalog id
+    // OR an id that doesn't match any legacy short-form key — the latter is
+    // how user-added Hugging Face / custom catalog entries survive across
+    // reloads (their ids are sanitized labels, not WebLLM ids).
+    const isBuiltin = VALID_WEBLLM_IDS.has(p.modelIdentifier);
+    const isLegacy = p.modelIdentifier in LEGACY_ID_TO_WEBLLM;
+    if (p.runtimeType === "webllm" && (isBuiltin || !isLegacy)) {
       if (seenIdentifiers.has(p.modelIdentifier)) continue;
       seenIdentifiers.add(p.modelIdentifier);
       migrated.push({
