@@ -40,6 +40,15 @@ export interface Message {
   content: string;
   timestamp: string;
   stats?: { tokensPerSec: number; totalTimeMs: number; modelUsed: string; runtimeUsed: string; };
+  /**
+   * Set on assistant turns whose context was augmented via RAG. The UI
+   * surfaces this as a "Used N excerpts from filename.pdf" badge so the
+   * user knows the model saw retrieved passages, not the whole document.
+   */
+  ragMeta?: {
+    excerptCount: number;
+    docs: { docId: string; name: string; usedExcerpts: number }[];
+  };
 }
 
 export interface AppSettings {

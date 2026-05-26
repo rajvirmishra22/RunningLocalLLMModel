@@ -22,6 +22,8 @@ pub struct IndexedDoc {
     pub chunk_count: usize,
     #[serde(rename = "createdAt")]
     pub created_at: String,
+    #[serde(rename = "pageCount", default, skip_serializing_if = "Option::is_none")]
+    pub page_count: Option<u32>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -38,6 +40,8 @@ pub struct StoredDoc {
     pub name: String,
     #[serde(rename = "createdAt")]
     pub created_at: String,
+    #[serde(rename = "pageCount", default, skip_serializing_if = "Option::is_none")]
+    pub page_count: Option<u32>,
     pub chunks: Vec<StoredChunk>,
 }
 
@@ -125,6 +129,7 @@ pub fn add_document(
     name: String,
     chunks: Vec<String>,
     embeddings: Vec<Vec<f32>>,
+    page_count: Option<u32>,
 ) -> Result<IndexedDoc> {
     if chunks.len() != embeddings.len() {
         return Err(anyhow!(
@@ -140,6 +145,7 @@ pub fn add_document(
         doc_id: doc_id.clone(),
         name: name.clone(),
         created_at: created_at.clone(),
+        page_count,
         chunks: chunks
             .into_iter()
             .zip(embeddings.into_iter())
@@ -157,6 +163,7 @@ pub fn add_document(
         name,
         chunk_count: stored.chunks.len(),
         created_at,
+        page_count,
     };
 
     let mut index = load_index(app);

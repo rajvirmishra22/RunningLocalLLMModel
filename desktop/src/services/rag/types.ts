@@ -11,6 +11,8 @@ export interface IndexedDoc {
   chunkCount: number;
   /** ISO timestamp the doc was indexed. */
   createdAt: string;
+  /** PDF page count (undefined for non-PDF docs). */
+  pageCount?: number;
 }
 
 export interface RetrievedChunk {
@@ -56,6 +58,7 @@ export interface RagBackend {
     name: string,
     chunks: string[],
     embeddings: Float32Array[],
+    meta?: { pageCount?: number },
   ): Promise<IndexedDoc>;
 
   listDocuments(): Promise<IndexedDoc[]>;

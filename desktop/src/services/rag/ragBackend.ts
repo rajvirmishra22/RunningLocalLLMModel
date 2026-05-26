@@ -98,11 +98,12 @@ export const ragBackend: RagBackend = {
     return result.map((arr) => new Float32Array(arr));
   },
 
-  async addDocument(name, chunks, embeddings) {
+  async addDocument(name, chunks, embeddings, meta) {
     return invoke<IndexedDoc>("rag_add_document", {
       name,
       chunks,
       embeddings: embeddings.map((e) => Array.from(e)),
+      pageCount: meta?.pageCount ?? null,
     });
   },
 

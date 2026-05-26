@@ -25,6 +25,7 @@ type StoredDoc = {
   docId: string;
   name: string;
   createdAt: string;
+  pageCount?: number;
   chunks: StoredChunk[];
 };
 
@@ -79,12 +80,13 @@ export const ragBackend: RagBackend = {
     return out;
   },
 
-  async addDocument(name, chunks, embeddings) {
+  async addDocument(name, chunks, embeddings, meta) {
     const docId = genDocId();
     const stored: StoredDoc = {
       docId,
       name,
       createdAt: new Date().toISOString(),
+      pageCount: meta?.pageCount,
       chunks: chunks.map((text, i) => ({ text, embedding: embeddings[i] })),
     };
     docs.set(docId, stored);
@@ -93,6 +95,7 @@ export const ragBackend: RagBackend = {
       name,
       chunkCount: chunks.length,
       createdAt: stored.createdAt,
+      pageCount: stored.pageCount,
     };
   },
 
@@ -102,6 +105,7 @@ export const ragBackend: RagBackend = {
       name: d.name,
       chunkCount: d.chunks.length,
       createdAt: d.createdAt,
+      pageCount: d.pageCount,
     }));
   },
 

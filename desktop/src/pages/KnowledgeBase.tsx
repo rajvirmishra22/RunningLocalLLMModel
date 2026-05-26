@@ -115,6 +115,11 @@ export default function KnowledgeBase() {
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium truncate">{d.name}</p>
                     <p className="text-[11px] text-muted-foreground">
+                      {d.pageCount != null && (
+                        <>
+                          {d.pageCount} page{d.pageCount === 1 ? "" : "s"} ·{" "}
+                        </>
+                      )}
                       {d.chunkCount} chunk{d.chunkCount === 1 ? "" : "s"} · indexed {formatDate(d.createdAt)}
                     </p>
                   </div>

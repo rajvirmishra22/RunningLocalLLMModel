@@ -382,8 +382,9 @@ fn rag_add_document(
     name: String,
     chunks: Vec<String>,
     embeddings: Vec<Vec<f32>>,
+    page_count: Option<u32>,
 ) -> Result<IndexedDoc, String> {
-    rag_store::add_document(&app, name, chunks, embeddings)
+    rag_store::add_document(&app, name, chunks, embeddings, page_count)
         .map_err(|e| format!("{e:#}"))
 }
 

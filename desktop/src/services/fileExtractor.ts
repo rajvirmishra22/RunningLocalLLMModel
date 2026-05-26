@@ -20,6 +20,12 @@ pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUrl as string;
 // with a visible badge so the user knows the rest didn't make it in.
 // Remaining tokens cover the system prompt, chat history, your typed
 // question, and the model's reply.
+/**
+ * Soft cap for inline attachments only. Files larger than this are routed
+ * through the RAG pipeline (see `RAG_THRESHOLD_CHARS` in `services/rag/rag.ts`),
+ * so this constant is effectively just a "what we'd inline whole if asked"
+ * marker. Kept for backwards compatibility with older callers.
+ */
 export const MAX_CHARS = 48_000;
 
 /** Hard cap on raw file size accepted (50 MB). PDFs above this fail fast. */
@@ -28,14 +34,21 @@ export const MAX_FILE_BYTES = 50 * 1024 * 1024;
 export type ExtractedFile = {
   /** Original filename including extension. Shown in the chip. */
   name: string;
-  /** Plain-text contents. May have been truncated to MAX_CHARS. */
+  /**
+   * Plain-text contents. Full document text — no truncation applied. The
+   * caller (Chat) decides whether to inline the whole thing or route through
+   * RAG based on `chars`.
+   */
   text: string;
   /** Original file size in bytes. */
   bytes: number;
   /** Character count after extraction (post-truncation). */
   chars: number;
-  /** True if the text was cut at MAX_CHARS. */
-  truncated: boolean;
+  /**
+   * Page count for PDFs (undefined for other file kinds). Surfaced in the
+   * Knowledge Base UI alongside chunk counts.
+   */
+  pages?: number;
   /** Coarse classification for the chip icon. */
   kind: "pdf" | "text" | "code" | "data";
 };
@@ -108,21 +121,12 @@ function classify(name: string): ExtractedFile["kind"] | "pdf" | null {
   return TEXT_EXTS[ext] ?? null;
 }
 
-function truncate(text: string): { text: string; truncated: boolean } {
-  if (text.length <= MAX_CHARS) return { text, truncated: false };
-  return {
-    text:
-      text.slice(0, MAX_CHARS) +
-      `\n\n[...truncated — file was longer than ${MAX_CHARS.toLocaleString()} characters and the rest was dropped to stay within the model's context window.]`,
-    truncated: true,
-  };
-}
-
-async function extractPdf(file: File): Promise<string> {
+async function extractPdf(file: File): Promise<{ text: string; pages: number }> {
   const buf = await file.arrayBuffer();
   const doc = await pdfjs.getDocument({ data: buf }).promise;
+  const pageCount = doc.numPages;
   const pages: string[] = [];
-  for (let i = 1; i <= doc.numPages; i++) {
+  for (let i = 1; i <= pageCount; i++) {
     const page = await doc.getPage(i);
     const content = await page.getTextContent();
     // pdfjs returns positioned items; join with spaces and keep page boundaries.
@@ -135,7 +139,7 @@ async function extractPdf(file: File): Promise<string> {
     pages.push(`--- Page ${i} ---\n${text}`);
   }
   await doc.destroy();
-  return pages.join("\n\n");
+  return { text: pages.join("\n\n"), pages: pageCount };
 }
 
 /**
@@ -159,9 +163,12 @@ export async function extractFile(file: File): Promise<ExtractedFile> {
   }
 
   let raw: string;
+  let pages: number | undefined;
   if (kind === "pdf") {
     try {
-      raw = await extractPdf(file);
+      const r = await extractPdf(file);
+      raw = r.text;
+      pages = r.pages;
     } catch (e) {
       throw new Error(
         `Couldn't read this PDF. ${
@@ -173,13 +180,15 @@ export async function extractFile(file: File): Promise<ExtractedFile> {
     raw = await file.text();
   }
 
-  const { text, truncated } = truncate(raw);
+  // No truncation: callers route long documents through the RAG pipeline
+  // rather than dropping the tail. Inline attachments are bounded by the
+  // RAG threshold (~4k chars), well under any model context limit.
   return {
     name: file.name,
-    text,
+    text: raw,
     bytes: file.size,
-    chars: text.length,
-    truncated,
+    chars: raw.length,
+    pages,
     kind: kind === "pdf" ? "pdf" : kind,
   };
 }
@@ -194,7 +203,7 @@ export function buildAttachmentBlock(files: ExtractedFile[]): string {
   const parts = files.map(
     (f) =>
       `=== Attached file: ${f.name} (${f.chars.toLocaleString()} chars${
-        f.truncated ? ", truncated" : ""
+        f.pages ? `, ${f.pages} page${f.pages === 1 ? "" : "s"}` : ""
       }) ===\n${f.text}\n=== End of ${f.name} ===`,
   );
   return parts.join("\n\n") + "\n\n";

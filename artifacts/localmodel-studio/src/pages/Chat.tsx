@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { Link } from "wouter";
-import { Send, Square, Trash2, Plus, MessageSquare, Clock, Zap, Download, Loader2, AlertCircle, Globe, Sliders, Cloud, CloudOff, Paperclip, FileText, FileCode, FileSpreadsheet, X } from "lucide-react";
+import { Send, Square, Trash2, Plus, MessageSquare, Clock, Zap, Download, Loader2, AlertCircle, Globe, Sliders, Cloud, CloudOff, Paperclip, FileText, FileCode, FileSpreadsheet, X, BookOpen } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -386,12 +386,33 @@ export default function Chat() {
       .map((a) => a.docId!);
 
     let ragBlock = "";
+    // Per-document tally of which retrieved excerpts came from where. Stored
+    // on the assistant message so the bubble can show a "Used N excerpts
+    // from filename.pdf" badge — making it visible to the user that the
+    // model saw retrieved passages, not the whole document.
+    let ragMeta: Message["ragMeta"] | undefined;
     if (ragDocIds.length > 0) {
       try {
         // Retrieval query = the user's text (or the document name if no text).
         const queryText = visibleText || "summarise the document";
         const chunks = await retrieveForQuery(ragDocIds, queryText);
         ragBlock = buildRagBlock(chunks);
+        if (chunks.length > 0) {
+          const byDoc = new Map<string, { name: string; n: number }>();
+          for (const c of chunks) {
+            const cur = byDoc.get(c.docId);
+            if (cur) cur.n += 1;
+            else byDoc.set(c.docId, { name: c.docName, n: 1 });
+          }
+          ragMeta = {
+            excerptCount: chunks.length,
+            docs: Array.from(byDoc.entries()).map(([docId, v]) => ({
+              docId,
+              name: v.name,
+              usedExcerpts: v.n,
+            })),
+          };
+        }
       } catch (e) {
         // RAG failure shouldn't block the message — log and continue with
         // whatever inline context we have.
@@ -452,6 +473,7 @@ export default function Chat() {
         content: fullContent,
         timestamp: new Date().toISOString(),
         stats,
+        ragMeta,
       };
       const finalConv: Conversation = {
         ...updatedConv,
@@ -1024,6 +1046,24 @@ function MessageBubble({ message, modelName }: { message: Message; modelName?: s
             <StatBit value={message.stats.runtimeUsed} />
           </div>
         )}
+        {message.ragMeta && message.ragMeta.excerptCount > 0 && (
+          <div
+            data-testid={`rag-badge-${message.id}`}
+            className="mt-1.5 inline-flex items-center gap-1.5 px-2 py-0.5 rounded border border-primary/30 bg-primary/5 text-[10px] text-primary"
+            title={message.ragMeta.docs
+              .map((d) => `${d.usedExcerpts} from ${d.name}`)
+              .join(" · ")}
+          >
+            <BookOpen className="w-3 h-3" />
+            <span>
+              Used {message.ragMeta.excerptCount} excerpt
+              {message.ragMeta.excerptCount === 1 ? "" : "s"} from{" "}
+              {message.ragMeta.docs.length === 1
+                ? message.ragMeta.docs[0].name
+                : `${message.ragMeta.docs.length} documents`}
+            </span>
+          </div>
+        )}
         <p className="text-[10px] text-muted-foreground mt-1 px-1">
           {new Date(message.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
         </p>
@@ -1075,7 +1115,7 @@ function AttachmentChip({
       ? attachment.progressText ?? "Indexing…"
       : isIndexed
         ? `Indexed: ${attachment.chunkCount} chunks searchable`
-        : `${file.chars.toLocaleString()} characters${file.truncated ? " (truncated)" : ""}`;
+        : `${file.chars.toLocaleString()} characters${file.pages ? ` · ${file.pages} pages` : ""}`;
 
   return (
     <div
@@ -1112,9 +1152,9 @@ function AttachmentChip({
           failed
         </span>
       )}
-      {!isRag && file.truncated && (
-        <span className="text-[9px] px-1 rounded bg-yellow-500/10 text-yellow-500 border border-yellow-500/20 flex-shrink-0">
-          truncated
+      {!isRag && file.pages != null && (
+        <span className="text-[9px] px-1 rounded bg-muted text-muted-foreground border border-border flex-shrink-0">
+          {file.pages}p
         </span>
       )}
       <button

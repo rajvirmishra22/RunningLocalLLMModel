@@ -49,7 +49,7 @@ export async function ensureReady(
  * sending a chat message.
  */
 export async function indexFile(
-  file: { name: string; text: string },
+  file: { name: string; text: string; pages?: number },
   onProgress?: (p: RagInitProgress) => void,
 ): Promise<IndexedDoc> {
   await ragBackend.ensureModel(onProgress);
@@ -64,7 +64,9 @@ export async function indexFile(
   });
   const embeddings = await ragBackend.embed(chunks);
   onProgress?.({ text: "Saving to knowledge base…", progress: 0.95 });
-  const doc = await ragBackend.addDocument(file.name, chunks, embeddings);
+  const doc = await ragBackend.addDocument(file.name, chunks, embeddings, {
+    pageCount: file.pages,
+  });
   onProgress?.({ text: "Indexed.", progress: 1 });
   return doc;
 }
