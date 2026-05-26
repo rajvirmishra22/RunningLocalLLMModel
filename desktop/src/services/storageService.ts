@@ -261,7 +261,7 @@ export const storageService = {
           {
             id: "msg_2",
             role: "assistant",
-            content: "Yes! I am running entirely on your machine via native llama.cpp. No data is sent to the cloud.",
+            content: "Yes! I am running entirely in your browser via WebGPU. No data is sent to the cloud.",
             timestamp: new Date().toISOString()
           }
         ]

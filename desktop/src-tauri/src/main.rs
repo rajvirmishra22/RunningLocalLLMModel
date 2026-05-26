@@ -2,17 +2,22 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod download;
+mod embeddings;
 mod inference;
+mod rag_store;
 
 use download::{DownloadRegistry, DownloadedModel};
+use embeddings::EmbedEngine;
 use inference::Engine;
 use parking_lot::Mutex;
+use rag_store::{IndexedDoc, RetrievedChunk};
 use serde::Serialize;
 use std::path::PathBuf;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc,
 };
+use std::time::Duration;
 use tauri::{Emitter, Manager, State};
 
 #[derive(Default)]
@@ -21,6 +26,11 @@ pub struct AppState {
     loaded_model_id: Mutex<Option<String>>,
     cancel: Arc<AtomicBool>,
     downloads: DownloadRegistry,
+    /// Embeddings engine, loaded lazily on first RAG use.
+    embed_engine: Mutex<Option<Arc<EmbedEngine>>>,
+    /// True while the embeddings model is being downloaded so we can refuse
+    /// concurrent download requests.
+    embed_downloading: Arc<AtomicBool>,
 }
 
 #[derive(Serialize, Clone)]
@@ -192,6 +202,212 @@ fn delete_downloaded_model(
     download::delete(&app, &model_id).map_err(|e| format!("{e:#}"))
 }
 
+// ---------------------------------------------------------------------------
+// RAG / embeddings commands
+// ---------------------------------------------------------------------------
+
+#[derive(Serialize)]
+struct EmbedStatus {
+    downloaded: bool,
+    loaded: bool,
+    #[serde(rename = "sizeBytes")]
+    size_bytes: u64,
+}
+
+fn embed_model_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    let dir = rag_store::embed_dir(app).map_err(|e| format!("{e:#}"))?;
+    Ok(dir.join(embeddings::EMBED_FILE_NAME))
+}
+
+#[tauri::command]
+fn embed_status(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<EmbedStatus, String> {
+    let path = embed_model_path(&app)?;
+    let (downloaded, size_bytes) = match std::fs::metadata(&path) {
+        Ok(m) => (true, m.len()),
+        Err(_) => (false, 0),
+    };
+    let loaded = state.embed_engine.lock().is_some();
+    Ok(EmbedStatus { downloaded, loaded, size_bytes })
+}
+
+/// Download the embeddings GGUF into `<app_local_data>/embed/`. Streams
+/// progress events on `embed-download-progress`. Idempotent — bails fast
+/// if the file is already present.
+#[tauri::command]
+async fn download_embed_model(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
+    let path = embed_model_path(&app)?;
+    if path.is_file() {
+        return Ok(path.to_string_lossy().into_owned());
+    }
+
+    // Refuse re-entrant downloads — the embed model is a single global
+    // resource, unlike the chat-model catalog which is per-id.
+    if state
+        .embed_downloading
+        .swap(true, Ordering::SeqCst)
+    {
+        return Err("an embeddings model download is already in progress".to_string());
+    }
+
+    let partial = path.with_extension("gguf.partial");
+    let _ = tokio::fs::remove_file(&partial).await;
+
+    let client = reqwest::Client::builder()
+        .user_agent("LocalModelStudio/0.1")
+        .connect_timeout(Duration::from_secs(30))
+        .build()
+        .map_err(|e| format!("http client setup failed: {e}"))?;
+
+    let result: Result<(), String> = async {
+        let resp = client
+            .get(embeddings::EMBED_DOWNLOAD_URL)
+            .send()
+            .await
+            .map_err(|e| format!("embed download request failed: {e}"))?;
+        if !resp.status().is_success() {
+            return Err(format!("embed download failed: HTTP {}", resp.status()));
+        }
+        let total = resp.content_length().unwrap_or(0);
+        let mut file = tokio::fs::File::create(&partial)
+            .await
+            .map_err(|e| format!("could not create {partial:?}: {e}"))?;
+
+        use futures_util::StreamExt;
+        use tokio::io::AsyncWriteExt;
+        let mut stream = resp.bytes_stream();
+        let mut downloaded: u64 = 0;
+        let mut last_emit = std::time::Instant::now();
+        let emit_interval = Duration::from_millis(100);
+
+        #[derive(Serialize, Clone)]
+        struct Prog {
+            #[serde(rename = "downloadedBytes")]
+            downloaded_bytes: u64,
+            #[serde(rename = "totalBytes")]
+            total_bytes: u64,
+        }
+
+        while let Some(chunk) = stream.next().await {
+            let bytes = chunk.map_err(|e| format!("download stream error: {e}"))?;
+            file.write_all(&bytes)
+                .await
+                .map_err(|e| format!("write failed: {e}"))?;
+            downloaded += bytes.len() as u64;
+
+            if last_emit.elapsed() >= emit_interval {
+                let _ = app.emit(
+                    "embed-download-progress",
+                    Prog {
+                        downloaded_bytes: downloaded,
+                        total_bytes: total,
+                    },
+                );
+                last_emit = std::time::Instant::now();
+            }
+        }
+        file.flush().await.ok();
+        drop(file);
+
+        let _ = app.emit(
+            "embed-download-progress",
+            Prog {
+                downloaded_bytes: downloaded,
+                total_bytes: if total > 0 { total } else { downloaded },
+            },
+        );
+
+        tokio::fs::rename(&partial, &path)
+            .await
+            .map_err(|e| format!("rename failed: {e}"))?;
+        Ok(())
+    }
+    .await;
+
+    state.embed_downloading.store(false, Ordering::SeqCst);
+    match result {
+        Ok(()) => Ok(path.to_string_lossy().into_owned()),
+        Err(e) => {
+            let _ = tokio::fs::remove_file(&partial).await;
+            Err(e)
+        }
+    }
+}
+
+#[tauri::command]
+async fn init_embed_model(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    if state.embed_engine.lock().is_some() {
+        return Ok(());
+    }
+    let path = embed_model_path(&app)?;
+    if !path.is_file() {
+        return Err("embeddings model not downloaded yet".to_string());
+    }
+    let engine = tokio::task::spawn_blocking(move || EmbedEngine::load(&path))
+        .await
+        .map_err(|e| format!("embed load task panicked: {e}"))?
+        .map_err(|e| format!("embed model load failed: {e:#}"))?;
+    *state.embed_engine.lock() = Some(Arc::new(engine));
+    Ok(())
+}
+
+#[tauri::command]
+async fn embed_texts(
+    state: State<'_, AppState>,
+    texts: Vec<String>,
+) -> Result<Vec<Vec<f32>>, String> {
+    let engine = {
+        let guard = state.embed_engine.lock();
+        guard
+            .clone()
+            .ok_or_else(|| "embeddings model not loaded".to_string())?
+    };
+    let result = tokio::task::spawn_blocking(move || engine.embed_batch(&texts))
+        .await
+        .map_err(|e| format!("embed task panicked: {e}"))?;
+    result.map_err(|e| format!("embedding failed: {e:#}"))
+}
+
+#[tauri::command]
+fn rag_add_document(
+    app: tauri::AppHandle,
+    name: String,
+    chunks: Vec<String>,
+    embeddings: Vec<Vec<f32>>,
+) -> Result<IndexedDoc, String> {
+    rag_store::add_document(&app, name, chunks, embeddings)
+        .map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+fn rag_list_documents(app: tauri::AppHandle) -> Result<Vec<IndexedDoc>, String> {
+    rag_store::list_documents(&app).map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+fn rag_delete_document(app: tauri::AppHandle, doc_id: String) -> Result<(), String> {
+    rag_store::delete_document(&app, &doc_id).map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+fn rag_retrieve(
+    app: tauri::AppHandle,
+    doc_ids: Vec<String>,
+    query_embedding: Vec<f32>,
+    k: usize,
+) -> Result<Vec<RetrievedChunk>, String> {
+    rag_store::retrieve(&app, &doc_ids, &query_embedding, k.max(1).min(50))
+        .map_err(|e| format!("{e:#}"))
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
@@ -205,6 +421,14 @@ fn main() {
             cancel_download,
             list_downloaded_models,
             delete_downloaded_model,
+            embed_status,
+            download_embed_model,
+            init_embed_model,
+            embed_texts,
+            rag_add_document,
+            rag_list_documents,
+            rag_delete_document,
+            rag_retrieve,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

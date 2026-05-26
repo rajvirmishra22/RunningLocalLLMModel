@@ -23,7 +23,9 @@ use std::sync::{Arc, OnceLock};
 /// same instance instead of re-initializing.
 static BACKEND: OnceLock<Arc<LlamaBackend>> = OnceLock::new();
 
-fn shared_backend() -> Result<Arc<LlamaBackend>> {
+/// Shared backend accessor — also used by `embeddings.rs` so the embedding
+/// engine and the chat engine share one process-wide `llama_backend_init`.
+pub fn shared_backend() -> Result<Arc<LlamaBackend>> {
     if let Some(b) = BACKEND.get() {
         return Ok(b.clone());
     }

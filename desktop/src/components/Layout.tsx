@@ -1,14 +1,26 @@
 import { Link, useLocation } from "wouter";
-import { LayoutDashboard, MessageSquare, Cpu, Settings, Shield, Sliders } from "lucide-react";
+import { LayoutDashboard, MessageSquare, Cpu, Settings, Shield, Sliders, BookOpen } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { isPersistent as isRagPersistent } from "@/services/rag/rag";
 
-const navItems = [
+const baseNavItems = [
   { path: "/", icon: LayoutDashboard, label: "Dashboard" },
   { path: "/chat", icon: MessageSquare, label: "Chat" },
   { path: "/models", icon: Cpu, label: "Models" },
   { path: "/tuning", icon: Sliders, label: "Tuning" },
   { path: "/settings", icon: Settings, label: "Settings" },
 ];
+
+// Knowledge Base is only meaningful when the RAG backend persists across
+// sessions (i.e. on desktop). On the web build the index is in-memory and
+// session-scoped, so we hide the nav entry to keep the UI honest.
+const navItems = isRagPersistent()
+  ? [
+      ...baseNavItems.slice(0, 2),
+      { path: "/knowledge-base", icon: BookOpen, label: "Knowledge" },
+      ...baseNavItems.slice(2),
+    ]
+  : baseNavItems;
 
 interface LayoutProps {
   children: React.ReactNode;

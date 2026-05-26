@@ -68,7 +68,7 @@ export default function Settings() {
               <div>
                 <p className="text-xs font-medium text-green-500">Local-first by default</p>
                 <p className="text-xs text-muted-foreground mt-0.5">
-                  Conversations, model profiles, and model files are stored locally on your machine. When you
+                  Conversations, model profiles, and downloaded weights are stored locally in your browser. When you
                   chat with a local model, nothing leaves your device. If you opt into a cloud provider below,
                   messages for <em>that</em> provider are sent to OpenAI or Anthropic — every other local model
                   conversation still stays on your machine.
@@ -206,8 +206,8 @@ export default function Settings() {
             <div className="flex items-start gap-2 p-3 rounded-md bg-muted/40 border border-border">
               <Info className="w-3.5 h-3.5 text-muted-foreground mt-0.5 flex-shrink-0" />
               <p className="text-xs text-muted-foreground">
-                Model files are stored in the LocalModel Studio app data folder. To free disk space, uninstall
-                the app or delete downloaded models from this Models page.
+                Downloaded model files are cached by your browser. To free disk space, clear site data for this app
+                in your browser settings.
               </p>
             </div>
           </CardContent>

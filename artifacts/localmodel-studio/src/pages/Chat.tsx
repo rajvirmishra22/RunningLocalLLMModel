@@ -28,6 +28,34 @@ import {
   FILE_INPUT_ACCEPT,
   type ExtractedFile,
 } from "@/services/fileExtractor";
+import {
+  shouldIndex,
+  indexFile,
+  retrieveForQuery,
+  buildRagBlock,
+  deleteDocument as deleteRagDoc,
+  isPersistent as isRagPersistent,
+  type RagInitProgress,
+} from "@/services/rag/rag";
+
+/**
+ * UI-level state we hold per attachment. Small files stay `inline` and get
+ * inlined into the prompt as before. Large files start as `indexing` (we
+ * chunk + embed in the background), then become `indexed` with a `docId`
+ * we can use for retrieval at send time. `error` is shown on the chip.
+ */
+type AttachmentState =
+  | { kind: "inline"; file: ExtractedFile }
+  | {
+      kind: "rag";
+      file: ExtractedFile;
+      status: "indexing" | "indexed" | "error";
+      docId?: string;
+      chunkCount?: number;
+      progressText?: string;
+      progressPct?: number;
+      error?: string;
+    };
 
 type Provider = "local" | CloudProvider;
 
@@ -72,7 +100,8 @@ export default function Chat() {
   const [provider, setProvider] = useState<Provider>("local");
   const [cloudCfg, setCloudCfg] = useState<CloudProviderConfig>(() => loadCloudConfig());
   // Attachments staged for the next message. Cleared after send.
-  const [attachments, setAttachments] = useState<ExtractedFile[]>([]);
+  // Each entry is either an inline small file or a RAG-indexed large file.
+  const [attachments, setAttachments] = useState<AttachmentState[]>([]);
   const [attachError, setAttachError] = useState<string | null>(null);
   const [attaching, setAttaching] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
@@ -209,15 +238,67 @@ export default function Chat() {
     loadData();
   };
 
+  /**
+   * Kick off background RAG indexing for one extracted file. Updates the
+   * matching attachment's progress as it goes, and flips it to `indexed`
+   * (with `docId`) or `error` when done.
+   */
+  const indexInBackground = (file: ExtractedFile) => {
+    void (async () => {
+      const updateThis = (mut: (a: AttachmentState) => AttachmentState) => {
+        setAttachments((prev) =>
+          prev.map((a) =>
+            a.kind === "rag" && a.file === file ? mut(a) : a,
+          ),
+        );
+      };
+      try {
+        const doc = await indexFile(file, (p: RagInitProgress) => {
+          updateThis((a) => ({
+            ...a,
+            progressText: p.text,
+            progressPct: p.progress,
+          }));
+        });
+        updateThis((a) => ({
+          ...a,
+          status: "indexed",
+          docId: doc.docId,
+          chunkCount: doc.chunkCount,
+          progressText: undefined,
+          progressPct: undefined,
+        }));
+      } catch (e) {
+        updateThis((a) => ({
+          ...a,
+          status: "error",
+          error: e instanceof Error ? e.message : String(e),
+          progressText: undefined,
+          progressPct: undefined,
+        }));
+      }
+    })();
+  };
+
   const handleFilesPicked = async (files: FileList | null) => {
     if (!files || files.length === 0) return;
     setAttachError(null);
     setAttaching(true);
-    const picked: ExtractedFile[] = [];
+    const picked: AttachmentState[] = [];
     for (const file of Array.from(files)) {
       try {
         const ex = await extractFile(file);
-        picked.push(ex);
+        if (shouldIndex(ex)) {
+          picked.push({
+            kind: "rag",
+            file: ex,
+            status: "indexing",
+            progressText: "Preparing…",
+            progressPct: 0,
+          });
+        } else {
+          picked.push({ kind: "inline", file: ex });
+        }
       } catch (e) {
         setAttachError(
           `${file.name}: ${e instanceof Error ? e.message : "could not read file"}`,
@@ -226,6 +307,11 @@ export default function Chat() {
     }
     if (picked.length > 0) {
       setAttachments((prev) => [...prev, ...picked]);
+      // Fire off indexing for any RAG entries. State update is async; we
+      // reference the file objects directly, which match by identity.
+      for (const a of picked) {
+        if (a.kind === "rag") indexInBackground(a.file);
+      }
     }
     setAttaching(false);
     // Reset the input so re-picking the same file fires onChange again.
@@ -233,9 +319,31 @@ export default function Chat() {
   };
 
   const removeAttachment = (idx: number) => {
-    setAttachments((prev) => prev.filter((_, i) => i !== idx));
+    setAttachments((prev) => {
+      const removed = prev[idx];
+      // Web's RAG index is in-memory; clean up to free RAM. On desktop the
+      // index is persistent — the doc stays in the Knowledge Base until the
+      // user explicitly deletes it there.
+      if (
+        removed &&
+        removed.kind === "rag" &&
+        removed.status === "indexed" &&
+        removed.docId &&
+        !isRagPersistent()
+      ) {
+        void deleteRagDoc(removed.docId).catch(() => {
+          /* best-effort */
+        });
+      }
+      return prev.filter((_, i) => i !== idx);
+    });
     setAttachError(null);
   };
+
+  /** True while any attachment is still being chunked + embedded. */
+  const isAnyIndexing = attachments.some(
+    (a) => a.kind === "rag" && a.status === "indexing",
+  );
 
   const sendMessage = async () => {
     if ((!input.trim() && attachments.length === 0) || isGenerating) return;
@@ -262,11 +370,35 @@ export default function Chat() {
       };
     }
 
-    // Inline extracted file text as a labeled context block before the user's
-    // typed message. The model sees one well-structured prompt; the user sees
-    // their own text in the chat bubble plus a footer chip per attachment.
-    const attachmentBlock = buildAttachmentBlock(attachments);
+    // Small attachments get inlined verbatim; large ones go through RAG so
+    // only the most relevant chunks reach the model. Both blocks get prepended
+    // to the user's typed text. The user only sees their own text in the
+    // bubble (plus per-attachment chips).
     const visibleText = input.trim();
+    const inlineFiles = attachments
+      .filter((a): a is Extract<AttachmentState, { kind: "inline" }> => a.kind === "inline")
+      .map((a) => a.file);
+    const ragDocIds = attachments
+      .filter(
+        (a): a is Extract<AttachmentState, { kind: "rag" }> =>
+          a.kind === "rag" && a.status === "indexed" && !!a.docId,
+      )
+      .map((a) => a.docId!);
+
+    let ragBlock = "";
+    if (ragDocIds.length > 0) {
+      try {
+        // Retrieval query = the user's text (or the document name if no text).
+        const queryText = visibleText || "summarise the document";
+        const chunks = await retrieveForQuery(ragDocIds, queryText);
+        ragBlock = buildRagBlock(chunks);
+      } catch (e) {
+        // RAG failure shouldn't block the message — log and continue with
+        // whatever inline context we have.
+        console.error("RAG retrieval failed:", e);
+      }
+    }
+    const attachmentBlock = ragBlock + buildAttachmentBlock(inlineFiles);
     const userMsg: Message = {
       id: `msg_${Date.now()}`,
       role: "user",
@@ -425,6 +557,7 @@ export default function Chat() {
 
   const canSend =
     (input.trim().length > 0 || attachments.length > 0) &&
+    !isAnyIndexing &&
     !isGenerating &&
     !attaching &&
     (provider === "local" ? profiles.length > 0 && webllmReady : cloudReady);
@@ -689,10 +822,10 @@ export default function Chat() {
               <div className="mb-2 space-y-1.5">
                 {attachments.length > 0 && (
                   <div className="flex flex-wrap gap-1.5">
-                    {attachments.map((file, idx) => (
+                    {attachments.map((att, idx) => (
                       <AttachmentChip
-                        key={`${file.name}-${idx}`}
-                        file={file}
+                        key={`${att.file.name}-${idx}`}
+                        attachment={att}
                         onRemove={() => removeAttachment(idx)}
                       />
                     ))}
@@ -909,12 +1042,13 @@ function StatBit({ icon, value }: { icon?: React.ReactNode; value: string }) {
 }
 
 function AttachmentChip({
-  file,
+  attachment,
   onRemove,
 }: {
-  file: ExtractedFile;
+  attachment: AttachmentState;
   onRemove: () => void;
 }) {
+  const file = attachment.file;
   const Icon =
     file.kind === "pdf"
       ? FileText
@@ -929,16 +1063,56 @@ function AttachmentChip({
       : file.bytes < 1024 * 1024
         ? `${(file.bytes / 1024).toFixed(1)} KB`
         : `${(file.bytes / 1024 / 1024).toFixed(1)} MB`;
+
+  const isRag = attachment.kind === "rag";
+  const isIndexing = isRag && attachment.status === "indexing";
+  const isIndexed = isRag && attachment.status === "indexed";
+  const isError = isRag && attachment.status === "error";
+
+  const title = isError
+    ? `Indexing failed: ${attachment.error ?? "unknown error"}`
+    : isIndexing
+      ? attachment.progressText ?? "Indexing…"
+      : isIndexed
+        ? `Indexed: ${attachment.chunkCount} chunks searchable`
+        : `${file.chars.toLocaleString()} characters${file.truncated ? " (truncated)" : ""}`;
+
   return (
     <div
       data-testid={`attach-chip-${file.name}`}
-      className="inline-flex items-center gap-1.5 pl-2 pr-1 py-1 rounded-md border border-border bg-muted/50 max-w-[280px]"
-      title={`${file.chars.toLocaleString()} characters${file.truncated ? " (truncated)" : ""}`}
+      className={cn(
+        "inline-flex items-center gap-1.5 pl-2 pr-1 py-1 rounded-md border bg-muted/50 max-w-[320px]",
+        isError ? "border-destructive/40" : "border-border",
+      )}
+      title={title}
     >
-      <Icon className="w-3 h-3 text-muted-foreground flex-shrink-0" />
+      {isIndexing ? (
+        <Loader2 className="w-3 h-3 text-primary animate-spin flex-shrink-0" />
+      ) : isError ? (
+        <AlertCircle className="w-3 h-3 text-destructive flex-shrink-0" />
+      ) : (
+        <Icon className="w-3 h-3 text-muted-foreground flex-shrink-0" />
+      )}
       <span className="text-[11px] font-medium truncate">{file.name}</span>
       <span className="text-[10px] text-muted-foreground flex-shrink-0">{sizeLabel}</span>
-      {file.truncated && (
+      {isIndexing && (
+        <span className="text-[9px] px-1 rounded bg-primary/10 text-primary border border-primary/20 flex-shrink-0">
+          {attachment.progressPct != null
+            ? `indexing ${Math.round(attachment.progressPct * 100)}%`
+            : "indexing"}
+        </span>
+      )}
+      {isIndexed && (
+        <span className="text-[9px] px-1 rounded bg-green-500/10 text-green-500 border border-green-500/20 flex-shrink-0">
+          {attachment.chunkCount} chunks
+        </span>
+      )}
+      {isError && (
+        <span className="text-[9px] px-1 rounded bg-destructive/10 text-destructive border border-destructive/20 flex-shrink-0">
+          failed
+        </span>
+      )}
+      {!isRag && file.truncated && (
         <span className="text-[9px] px-1 rounded bg-yellow-500/10 text-yellow-500 border border-yellow-500/20 flex-shrink-0">
           truncated
         </span>

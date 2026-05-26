@@ -50,28 +50,34 @@ Until that's set, the landing page shows "WINDOWS .EXE — COMING SOON" as a dis
 
 - `desktop/src/` — **the same React UI as the in-browser app**. The full `artifacts/localmodel-studio/src/` tree is mirrored here (pages, components, hooks, lib, services, index.css). Only one file is intentionally divergent.
 - `desktop/src/services/webllmService.ts` — Tauri-backed drop-in replacement that exposes the **same interface** as the web's `webllmService` (`WEBLLM_MODELS`, `checkWebGPU`, `loadModel`, `streamChat`, `unload`, `getLoadedModelId`). Internally it calls Tauri `invoke("chat" / "init_model" / "cancel_chat")` and listens to the `token` event. Multi-turn conversation history is formatted client-side with Llama 3 header tokens, then sent as one raw prompt to Rust.
+- `desktop/src/services/rag/ragBackend.ts` — Tauri-backed drop-in for the RAG embeddings/store backend. Same shape as the web version (`@xenova/transformers` + in-memory map); this one invokes `embed_status`, `download_embed_model`, `init_embed_model`, `embed_texts`, `rag_add_document`, `rag_list_documents`, `rag_delete_document`, `rag_retrieve` and listens to `embed-download-progress`. Persists across reloads.
 - `desktop/src-tauri/src/main.rs` — Tauri entry point + command handlers (`init_model`, `chat`, `cancel_chat`).
-- `desktop/src-tauri/src/inference.rs` — llama.cpp wrapper. Tokenizes the prompt verbatim (no template wrapping — the frontend does that) and streams generation, stopping on `<|eot_id|>` / `<|end_of_text|>`.
+- `desktop/src-tauri/src/inference.rs` — llama.cpp wrapper. Tokenizes the prompt verbatim (no template wrapping — the frontend does that) and streams generation, stopping on `<|eot_id|>` / `<|end_of_text|>`. Also exposes a `pub shared_backend()` so `embeddings.rs` reuses the same process-wide `llama_backend_init`.
+- `desktop/src-tauri/src/embeddings.rs` — second llama.cpp engine, configured with `with_embeddings(true) + with_pooling_type(Mean)`, loaded lazily from `<app_local_data>/embed/bge-small-en-v1.5-q8_0.gguf` (~33 MB Q8). L2-normalises every output so cosine = dot product. Used by the RAG pipeline.
+- `desktop/src-tauri/src/rag_store.rs` — JSON-on-disk RAG store. One `<docId>.json` per document plus a small `index.json`, all under `<app_local_data>/rag/`. No new compile-time deps (no rusqlite); robust to partial writes; ample for typical "dozens of docs, ~200 chunks each" usage.
 - `desktop/src-tauri/tauri.conf.json` — bundler config, including `bundle.resources` that ships `model.gguf` with the installer.
 - `desktop/scripts/fetch-model.{sh,ps1}` — downloads the starter GGUF before building.
 
 ### Updating the desktop UI
 
-Edit the web app (`artifacts/localmodel-studio/src/`) and re-copy into `desktop/src/`, **preserving the desktop-only `services/webllmService.ts`**. From the repo root:
+Edit the web app (`artifacts/localmodel-studio/src/`) and re-copy into `desktop/src/`, **preserving the two desktop-only overlay files**: `services/webllmService.ts` and `services/rag/ragBackend.ts`. From the repo root:
 
 ```bash
-# Save the Tauri shim, sync, restore.
+# Save the two Tauri shims, sync, restore.
 cp desktop/src/services/webllmService.ts /tmp/webllmService.desktop.ts
+cp desktop/src/services/rag/ragBackend.ts /tmp/ragBackend.desktop.ts
 cp -r artifacts/localmodel-studio/src/. desktop/src/
 cp /tmp/webllmService.desktop.ts desktop/src/services/webllmService.ts
+cp /tmp/ragBackend.desktop.ts desktop/src/services/rag/ragBackend.ts
 ```
 
-This is by design — desktop is outside the pnpm workspace, so we can't import the web's source directly. Keeping them in sync via copy + one overlay is the simplest contract.
+This is by design — desktop is outside the pnpm workspace, so we can't import the web's source directly. Keeping them in sync via copy + two overlays is the simplest contract.
 
 ### What works in the desktop build (vs the web build)
 
 - **Bundled Llama 3.2 1B Instruct**: works out of the box (native llama.cpp). The Models / Dashboard / Chat / Tuning / Settings pages all light up against it because the shim returns `checkWebGPU() === true` and reports the bundled model id as "loaded".
 - **Cloud BYO API keys (OpenAI / Anthropic)**: works identically — `cloudProviders.ts` uses `fetch` to OpenAI/Anthropic, which works inside Tauri's webview.
+- **Local RAG over attachments**: works. Attaching a file larger than ~4000 chars in Chat triggers background indexing — chunking happens in JS, embeddings come from BGE-small (~33 MB GGUF, auto-downloaded on first use into `<app_local_data>/embed/`), and docs are persisted as JSON under `<app_local_data>/rag/`. At send time only the top-K most relevant chunks reach the chat model. The **Knowledge** tab in the sidebar lists every indexed doc and lets you delete them. On web the same flow runs via `@xenova/transformers` ONNX in-browser, but the index is in-memory and the Knowledge tab is hidden.
 - **Other models in the catalog (Llama 3B/8B, Qwen, Phi, Mistral)**: visible in the UI but **not runnable yet** — selecting one shows a friendly "in-app downloader coming in a future update" message. An on-disk GGUF download manager (Rust side fetches from Hugging Face, frontend shows progress) is the planned Phase 2 work.
 
 ## Architecture decisions
