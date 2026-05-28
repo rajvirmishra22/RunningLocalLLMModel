@@ -39,9 +39,6 @@
     "resources": {
       "resources/model.gguf": "model.gguf"
     },
-    "externalBin": [
-      "binaries/llama-mtmd-cli"
-    ],
     "category": "DeveloperTool",
     "shortDescription": "Run open-source LLMs locally on your machine.",
     "longDescription": "LocalModel Studio is a self-contained desktop app for chatting with open-source language models. Inference runs entirely on your hardware via llama.cpp — no servers, no API keys, no telemetry. Ships with a starter model so it works the moment you install it.",

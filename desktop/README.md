@@ -39,29 +39,24 @@ bash scripts/fetch-model.sh        # macOS/Linux
 # OR
 pwsh scripts/fetch-model.ps1       # Windows PowerShell
 
-# 4. (Optional, for local vision models) drop the llama.cpp `llama-mtmd-cli`
-#    sidecar binary into `src-tauri/binaries/`. See "Local vision sidecar" below.
-
-# 5. Build the production installer
+# 4. Build the production installer
 npm run tauri build
 ```
 
-### Local vision sidecar (`llama-mtmd-cli`)
+The installer no longer needs any extra binaries at build time — `cargo tauri build` works against a clean checkout. Local vision support is installed by the end-user from inside the app (see below).
 
-Vision-capable catalog entries (Moondream 2, LLaVA 1.6, MiniCPM-V 2.6, Qwen2-VL, Gemma 3 4B, etc.) need llama.cpp's `llama-mtmd-cli` to run. Rather than hand-roll llava/mtmd FFI bindings (the `llama-cpp-2` crate doesn't expose them), we ship the upstream CLI as a Tauri **sidecar** declared in `tauri.conf.json → bundle.externalBin`.
+### Local vision helper (`llama-mtmd-cli`) — installed post-install, not bundled
 
-To wire it up before building:
+Vision-capable catalog entries (Moondream 2, LLaVA 1.6, MiniCPM-V 2.6, Qwen2-VL, Gemma 3 4B, Llama 3.2 Vision, etc.) need llama.cpp's `llama-mtmd-cli` to run. The `llama-cpp-2` crate doesn't expose llava/mtmd bindings, and the upstream CLI plus its co-located DLLs would add tens of MB across multiple platforms to a bundle that already weighs ~440 MB for the starter model.
 
-1. Download a prebuilt `llama-mtmd-cli` (or build it from llama.cpp) for each target platform you ship.
-   - Releases: https://github.com/ggerganov/llama.cpp/releases (look for `llama-mtmd-cli` in the bin archive).
-2. Rename it for Tauri's per-target convention and drop it into `src-tauri/binaries/`:
-   - Windows x64: `src-tauri/binaries/llama-mtmd-cli-x86_64-pc-windows-msvc.exe`
-   - macOS arm64: `src-tauri/binaries/llama-mtmd-cli-aarch64-apple-darwin`
-   - macOS x64:   `src-tauri/binaries/llama-mtmd-cli-x86_64-apple-darwin`
-   - Linux x64:   `src-tauri/binaries/llama-mtmd-cli-x86_64-unknown-linux-gnu`
-3. Make sure each file is executable (`chmod +x` on Unix).
+We previously shipped it as a Tauri `externalBin` sidecar, which hard-failed the build whenever the binary wasn't pre-placed in `src-tauri/binaries/<target>/`. That was a footgun for every contributor and every CI run. The current design:
 
-If the sidecar is missing the build still succeeds — non-vision chat works as before — but any attempt to chat against a `vision: true` model will fail at runtime with "could not resolve llama-mtmd-cli sidecar". Vision model downloads also pull a companion `mmproj` GGUF; both files live under `<app_local_data>/models/` and `<app_local_data>/mmproj/` respectively.
+- The installer ships with **no** vision binary.
+- The app exposes **Settings → Local Vision Helper**. The user grabs the prebuilt llama.cpp release for their OS from <https://github.com/ggml-org/llama.cpp/releases>, extracts it, pastes the path to `llama-mtmd-cli[.exe]`, and clicks **Install**.
+- The Rust side (`install_mtmd_cli`) copies the binary — and, on Windows, any sibling `.dll` files like `ggml.dll`/`llama.dll` — into `<app_local_data>/bin/`. It's runnable from there for all subsequent vision chats.
+- Cloud vision models (OpenAI `gpt-4o`, Anthropic `claude-3.5-sonnet`, etc.) do **not** need the helper — only local mmproj-based models do.
+
+Until the helper is installed, any attempt to chat against a `vision: true` local model fails with a friendly "Open Settings → Local Vision and install the llama-mtmd-cli helper" error. Vision model downloads still pull a companion `mmproj` GGUF; that one is auto-downloaded the first time you chat (no manual step). Both live under `<app_local_data>/models/` and `<app_local_data>/mmproj/`.
 
 The signed installer lands at:
 

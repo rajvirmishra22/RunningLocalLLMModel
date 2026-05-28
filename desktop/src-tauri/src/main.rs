@@ -536,6 +536,37 @@ fn mmproj_is_downloaded(app: tauri::AppHandle, model_id: String) -> bool {
     vision::is_mmproj_downloaded(&app, &model_id)
 }
 
+#[derive(Serialize)]
+struct MtmdStatus {
+    installed: bool,
+    path: String,
+    #[serde(rename = "binDir")]
+    bin_dir: String,
+}
+
+#[tauri::command]
+fn mtmd_status(app: tauri::AppHandle) -> Result<MtmdStatus, String> {
+    let path = vision::mtmd_cli_path(&app).map_err(|e| format!("{e:#}"))?;
+    let bin = vision::bin_dir(&app).map_err(|e| format!("{e:#}"))?;
+    Ok(MtmdStatus {
+        installed: path.is_file(),
+        path: path.to_string_lossy().into_owned(),
+        bin_dir: bin.to_string_lossy().into_owned(),
+    })
+}
+
+#[tauri::command]
+fn install_mtmd_cli(app: tauri::AppHandle, source_path: String) -> Result<String, String> {
+    let src = std::path::PathBuf::from(source_path);
+    let dest = vision::install_mtmd_cli_from(&app, &src).map_err(|e| format!("{e:#}"))?;
+    Ok(dest.to_string_lossy().into_owned())
+}
+
+#[tauri::command]
+fn uninstall_mtmd_cli(app: tauri::AppHandle) -> Result<(), String> {
+    vision::uninstall_mtmd_cli(&app).map_err(|e| format!("{e:#}"))
+}
+
 #[tauri::command]
 fn rag_retrieve(
     app: tauri::AppHandle,
@@ -577,6 +608,9 @@ fn main() {
             delete_mmproj,
             chat_with_images,
             cancel_vision_chat,
+            mtmd_status,
+            install_mtmd_cli,
+            uninstall_mtmd_cli,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

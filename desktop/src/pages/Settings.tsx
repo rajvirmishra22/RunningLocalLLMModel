@@ -1,11 +1,11 @@
-import { useState } from "react";
-import { Trash2, Shield, Info, HardDrive, Cloud, Eye, EyeOff, CheckCircle2, XCircle, Loader2, ExternalLink, HelpCircle, ChevronDown } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Trash2, Shield, Info, HardDrive, Cloud, Eye, EyeOff, CheckCircle2, XCircle, Loader2, ExternalLink, HelpCircle, ChevronDown, ImageIcon } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { webllmService } from "@/services/webllmService";
+import { webllmService, isCustomCatalogSupported } from "@/services/webllmService";
 import {
   loadCloudConfig,
   saveCloudConfig,
@@ -17,10 +17,81 @@ import {
   type CloudProviderConfig,
 } from "@/services/cloudProviders";
 
+type MtmdStatus = { installed: boolean; path: string; binDir: string };
+type MtmdInstallState =
+  | { state: "idle" }
+  | { state: "installing" }
+  | { state: "ok"; path: string }
+  | { state: "error"; message: string };
+
 export default function Settings() {
   const [modelUnloaded, setModelUnloaded] = useState(false);
   const [cloudCfg, setCloudCfg] = useState<CloudProviderConfig>(() => loadCloudConfig());
   const [savedNote, setSavedNote] = useState<string | null>(null);
+  const isDesktop = isCustomCatalogSupported();
+  const [mtmdStatus, setMtmdStatus] = useState<MtmdStatus | null>(null);
+  const [mtmdSrc, setMtmdSrc] = useState("");
+  const [mtmdInstall, setMtmdInstall] = useState<MtmdInstallState>({ state: "idle" });
+
+  useEffect(() => {
+    if (!isDesktop) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        // @ts-ignore — desktop-only module; gated by isDesktop above
+        const { invoke } = (await import("@tauri-apps/api/core")) as { invoke: <T = unknown>(cmd: string, args?: Record<string, unknown>) => Promise<T> };
+        const s = await invoke<MtmdStatus>("mtmd_status");
+        if (!cancelled) setMtmdStatus(s);
+      } catch {
+        if (!cancelled) setMtmdStatus(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [isDesktop]);
+
+  const refreshMtmd = async () => {
+    try {
+      // @ts-ignore — desktop-only module; gated by isDesktop above
+        const { invoke } = (await import("@tauri-apps/api/core")) as { invoke: <T = unknown>(cmd: string, args?: Record<string, unknown>) => Promise<T> };
+      const s = await invoke<MtmdStatus>("mtmd_status");
+      setMtmdStatus(s);
+    } catch {
+      // ignore
+    }
+  };
+
+  const installMtmd = async () => {
+    const path = mtmdSrc.trim();
+    if (!path) {
+      setMtmdInstall({ state: "error", message: "Paste the full path to the extracted llama-mtmd-cli binary." });
+      return;
+    }
+    setMtmdInstall({ state: "installing" });
+    try {
+      // @ts-ignore — desktop-only module; gated by isDesktop above
+        const { invoke } = (await import("@tauri-apps/api/core")) as { invoke: <T = unknown>(cmd: string, args?: Record<string, unknown>) => Promise<T> };
+      const installedAt = await invoke<string>("install_mtmd_cli", { sourcePath: path });
+      setMtmdInstall({ state: "ok", path: installedAt });
+      setMtmdSrc("");
+      await refreshMtmd();
+    } catch (e) {
+      setMtmdInstall({ state: "error", message: e instanceof Error ? e.message : String(e) });
+    }
+  };
+
+  const uninstallMtmd = async () => {
+    try {
+      // @ts-ignore — desktop-only module; gated by isDesktop above
+        const { invoke } = (await import("@tauri-apps/api/core")) as { invoke: <T = unknown>(cmd: string, args?: Record<string, unknown>) => Promise<T> };
+      await invoke("uninstall_mtmd_cli");
+      setMtmdInstall({ state: "idle" });
+      await refreshMtmd();
+    } catch (e) {
+      setMtmdInstall({ state: "error", message: e instanceof Error ? e.message : String(e) });
+    }
+  };
 
   const clearConversations = () => {
     localStorage.removeItem("lms_conversations");
@@ -129,6 +200,118 @@ export default function Settings() {
             </div>
           </CardContent>
         </Card>
+
+        {isDesktop && (
+          <Card data-testid="card-local-vision">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-sm font-medium flex items-center gap-2">
+                <ImageIcon className="w-4 h-4" />
+                Local Vision Helper (Optional)
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="text-xs text-muted-foreground space-y-1.5">
+                <p>
+                  Running open-source vision models (Llama 3.2 Vision, MiniCPM-V, LLaVA, Moondream, etc.) on your own
+                  hardware needs llama.cpp's <code className="text-[10px] bg-muted px-1 py-0.5 rounded">llama-mtmd-cli</code>
+                  {" "}helper. It's a small executable that's not bundled with the installer — you grab it once and
+                  point us at it.
+                </p>
+                <ol className="list-decimal list-inside space-y-0.5 pl-1">
+                  <li>
+                    Download the prebuilt llama.cpp release for your OS from
+                    {" "}
+                    <a
+                      href="https://github.com/ggml-org/llama.cpp/releases"
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-primary hover:underline inline-flex items-center gap-0.5"
+                    >
+                      github.com/ggml-org/llama.cpp/releases
+                      <ExternalLink className="w-3 h-3" />
+                    </a>
+                    {" "}(pick the archive for your platform — e.g. <code className="text-[10px] bg-muted px-1 py-0.5 rounded">llama-*-bin-win-*-x64.zip</code> on Windows).
+                  </li>
+                  <li>Extract it anywhere.</li>
+                  <li>
+                    Paste the full path to <code className="text-[10px] bg-muted px-1 py-0.5 rounded">llama-mtmd-cli</code>
+                    {" "}(or <code className="text-[10px] bg-muted px-1 py-0.5 rounded">llama-mtmd-cli.exe</code> on Windows) below and click Install.
+                  </li>
+                </ol>
+                <p className="text-[11px] text-muted-foreground/80">
+                  On Windows we also copy any <code className="text-[10px] bg-muted px-1 py-0.5 rounded">.dll</code> files
+                  sitting next to it (ggml.dll, llama.dll, …) so the binary is actually loadable. Cloud vision models
+                  don't need this — only local mmproj-based models do.
+                </p>
+              </div>
+
+              {mtmdStatus?.installed ? (
+                <div className="flex items-start gap-2 p-3 rounded-md bg-green-500/10 border border-green-500/20">
+                  <CheckCircle2 className="w-4 h-4 text-green-500 mt-0.5 flex-shrink-0" />
+                  <div className="min-w-0 flex-1">
+                    <p className="text-xs font-medium text-green-500">Vision helper is installed</p>
+                    <p className="text-[11px] text-muted-foreground mt-0.5 truncate" title={mtmdStatus.path}>
+                      {mtmdStatus.path}
+                    </p>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={uninstallMtmd}
+                    className="gap-1.5 text-destructive hover:text-destructive hover:border-destructive/50"
+                    data-testid="btn-uninstall-mtmd"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    Remove
+                  </Button>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <Label htmlFor="mtmd-src" className="text-xs">
+                    Path to <code className="text-[10px] bg-muted px-1 py-0.5 rounded">llama-mtmd-cli</code>
+                  </Label>
+                  <div className="flex gap-2">
+                    <Input
+                      id="mtmd-src"
+                      value={mtmdSrc}
+                      onChange={(e) => setMtmdSrc(e.target.value)}
+                      placeholder={
+                        navigator.platform.toLowerCase().includes("win")
+                          ? "C:\\Users\\you\\llama.cpp\\llama-mtmd-cli.exe"
+                          : "/Users/you/llama.cpp/llama-mtmd-cli"
+                      }
+                      className="font-mono text-xs"
+                      data-testid="input-mtmd-src"
+                    />
+                    <Button
+                      size="sm"
+                      onClick={installMtmd}
+                      disabled={mtmdInstall.state === "installing" || !mtmdSrc.trim()}
+                      className="gap-1.5"
+                      data-testid="btn-install-mtmd"
+                    >
+                      {mtmdInstall.state === "installing" ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      ) : null}
+                      Install
+                    </Button>
+                  </div>
+                  {mtmdInstall.state === "error" && (
+                    <div className="flex items-start gap-2 text-[11px] text-destructive">
+                      <XCircle className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
+                      <span>{mtmdInstall.message}</span>
+                    </div>
+                  )}
+                  {mtmdStatus && (
+                    <p className="text-[11px] text-muted-foreground">
+                      Will be installed to: <code className="text-[10px] bg-muted px-1 py-0.5 rounded">{mtmdStatus.path}</code>
+                    </p>
+                  )}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        )}
 
         <Card>
           <CardHeader className="pb-3">

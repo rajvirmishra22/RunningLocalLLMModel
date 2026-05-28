@@ -1,6 +1,6 @@
 //! Local multimodal (vision) inference.
 //!
-//! Why a sidecar instead of FFI:
+//! Why a separate binary instead of FFI:
 //!
 //! We use llama.cpp through `llama-cpp-2` everywhere else (text gen,
 //! embeddings). For multimodal models we'd need the `llava`/`mtmd` C++
@@ -11,21 +11,24 @@
 //! lines of `unsafe extern "C"` glue is to shell out to llama.cpp's own
 //! `llama-mtmd-cli` binary.
 //!
-//! That binary is shipped alongside the prebuilt `llama-cli` in every
-//! llama.cpp release (Windows, macOS, Linux). We bundle it as a Tauri
-//! sidecar — copied into `src-tauri/binaries/llama-mtmd-cli-<target>`
-//! before `tauri build`, and resolved at runtime through Tauri's shell
-//! plugin so the user never sees an extra install step. See
-//! `desktop/README.md` for the build-side wiring.
+//! Why we don't use Tauri's `externalBin` sidecar mechanism:
+//!
+//! `externalBin` is strict — if the binary isn't present for the current
+//! target triple at build time, `cargo tauri build` hard-fails. That makes
+//! the entire installer impossible to build unless every contributor has
+//! manually grabbed the right llama.cpp release for their OS. Vision is
+//! optional for most users, so instead we look the binary up at runtime in
+//! `<app_local_data>/bin/`. The app ships without it; the first time a
+//! user picks a vision model, the UI surfaces a clear "install vision
+//! support" prompt that wires up the in-app downloader (`install_mtmd_cli`).
 //!
 //! The contract here is intentionally small:
 //!   * `chat_with_images(model_path, mmproj_path, prompt, image_paths,
-//!     options)` spawns the sidecar, streams every stdout chunk back to
-//!     the renderer as `token` events (the same channel the text engine
-//!     uses), and resolves with the full text when the process exits.
-//!   * Cancellation kills the child process — llama-mtmd-cli doesn't
-//!     have a graceful "stop generating" signal, so SIGKILL/TerminateProc
-//!     it is.
+//!     options)` spawns `llama-mtmd-cli`, streams every stdout chunk back
+//!     to the renderer as `token` events (the same channel the text
+//!     engine uses), and resolves with the full text on exit.
+//!   * Cancellation kills the child process — `llama-mtmd-cli` doesn't
+//!     have a graceful "stop generating" signal.
 
 use anyhow::{anyhow, Context, Result};
 use serde::Deserialize;
@@ -33,9 +36,9 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use tauri::{AppHandle, Emitter};
-use tauri_plugin_shell::process::{CommandChild, CommandEvent};
-use tauri_plugin_shell::ShellExt;
+use tauri::{AppHandle, Emitter, Manager};
+use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::process::{Child, Command};
 use tokio::sync::Mutex;
 
 /// Options the frontend hands us per request. Mirrors `GenerateOpts` from
@@ -49,12 +52,18 @@ pub struct VisionOpts {
     pub top_p: f32,
 }
 
-/// Resolve `<app_local_data>/mmproj/`, creating it if missing. Kept in its
-/// own subdir (vs. living under `models/`) so the existing
-/// `list_downloaded_models()` flow doesn't accidentally surface mmproj files
-/// as standalone chat models.
+// ---------------------------------------------------------------------------
+// On-disk layout
+//
+// <app_local_data>/
+//   mmproj/<model-id>.mmproj.gguf   ← companion image projectors
+//   bin/llama-mtmd-cli[.exe]        ← the multimodal CLI itself
+//
+// Both live under app_local_data (not Resource) because they're optional,
+// per-machine, and installed on demand after the app is already running.
+// ---------------------------------------------------------------------------
+
 pub fn mmproj_dir(app: &AppHandle) -> Result<PathBuf> {
-    use tauri::Manager;
     let base = app
         .path()
         .app_local_data_dir()
@@ -63,6 +72,32 @@ pub fn mmproj_dir(app: &AppHandle) -> Result<PathBuf> {
     std::fs::create_dir_all(&dir)
         .with_context(|| format!("failed to create mmproj dir at {dir:?}"))?;
     Ok(dir)
+}
+
+pub fn bin_dir(app: &AppHandle) -> Result<PathBuf> {
+    let base = app
+        .path()
+        .app_local_data_dir()
+        .context("could not resolve app local data dir")?;
+    let dir = base.join("bin");
+    std::fs::create_dir_all(&dir)
+        .with_context(|| format!("failed to create bin dir at {dir:?}"))?;
+    Ok(dir)
+}
+
+/// Full path to where we expect the `llama-mtmd-cli` executable to live.
+/// `.exe` on Windows, bare name elsewhere.
+pub fn mtmd_cli_path(app: &AppHandle) -> Result<PathBuf> {
+    let name = if cfg!(target_os = "windows") {
+        "llama-mtmd-cli.exe"
+    } else {
+        "llama-mtmd-cli"
+    };
+    Ok(bin_dir(app)?.join(name))
+}
+
+pub fn is_mtmd_cli_installed(app: &AppHandle) -> bool {
+    mtmd_cli_path(app).map(|p| p.is_file()).unwrap_or(false)
 }
 
 fn sanitize_id(model_id: &str) -> String {
@@ -75,22 +110,19 @@ fn sanitize_id(model_id: &str) -> String {
         .collect()
 }
 
-/// On-disk path for a model's companion mmproj GGUF.
 pub fn mmproj_path(app: &AppHandle, model_id: &str) -> Result<PathBuf> {
     Ok(mmproj_dir(app)?.join(format!("{}.mmproj.gguf", sanitize_id(model_id))))
 }
 
-/// Whether a model's mmproj is fully on disk.
 pub fn is_mmproj_downloaded(app: &AppHandle, model_id: &str) -> bool {
     mmproj_path(app, model_id)
         .map(|p| p.is_file())
         .unwrap_or(false)
 }
 
-/// Streams `url` to `<mmproj_dir>/<id>.mmproj.gguf`. Same shape as
-/// `download::download` but writes into the mmproj subdir and emits its own
-/// event channel so the UI can tell mmproj progress apart from the chat
-/// model's progress (they often download back-to-back).
+/// Streams `url` to `<mmproj_dir>/<id>.mmproj.gguf`. Emits
+/// `mmproj-download-progress` so the UI can show a separate bar from the
+/// chat-model download (they often happen back-to-back).
 pub async fn download_mmproj(
     app: AppHandle,
     model_id: String,
@@ -188,18 +220,81 @@ pub async fn download_mmproj(
     Ok(final_path)
 }
 
-/// Tracks the currently-running sidecar child so `cancel_vision_chat` can
+/// Install the `llama-mtmd-cli` binary into `<app_local_data>/bin/` by
+/// copying it from a user-chosen local path. We deliberately don't auto-
+/// download from the internet because the llama.cpp release ships multiple
+/// platform-specific binaries with co-located DLL dependencies, and the
+/// safest cross-platform contract is: "you grab the right archive, point
+/// us at the extracted `llama-mtmd-cli` (or `.exe`), we put it in place".
+/// On Windows we also copy any `.dll` files sitting next to it (ggml.dll,
+/// llama.dll, etc.) so the binary actually runs.
+pub fn install_mtmd_cli_from(app: &AppHandle, source: &Path) -> Result<PathBuf> {
+    if !source.is_file() {
+        return Err(anyhow!(
+            "source binary not found at {source:?} — point us at the extracted llama-mtmd-cli"
+        ));
+    }
+    let dest = mtmd_cli_path(app)?;
+    std::fs::copy(source, &dest)
+        .with_context(|| format!("failed to copy {source:?} -> {dest:?}"))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&dest)?.permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&dest, perms).ok();
+    }
+
+    // On Windows the CLI links against ggml.dll / llama.dll / etc. The
+    // llama.cpp prebuilt ships them in the same folder. Copy any DLL
+    // sitting alongside the source so the binary is actually loadable.
+    if cfg!(target_os = "windows") {
+        if let Some(src_dir) = source.parent() {
+            let bin = bin_dir(app)?;
+            if let Ok(entries) = std::fs::read_dir(src_dir) {
+                for entry in entries.flatten() {
+                    let p = entry.path();
+                    let is_dll = p
+                        .extension()
+                        .and_then(|e| e.to_str())
+                        .map(|e| e.eq_ignore_ascii_case("dll"))
+                        .unwrap_or(false);
+                    if is_dll {
+                        if let Some(name) = p.file_name() {
+                            let _ = std::fs::copy(&p, bin.join(name));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(dest)
+}
+
+/// Remove an installed `llama-mtmd-cli` (and any co-installed DLLs).
+pub fn uninstall_mtmd_cli(app: &AppHandle) -> Result<()> {
+    let bin = bin_dir(app)?;
+    if let Ok(entries) = std::fs::read_dir(&bin) {
+        for entry in entries.flatten() {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+    Ok(())
+}
+
+/// Tracks the currently-running mtmd child so `cancel_vision_chat` can
 /// kill it. Only one vision generation runs at a time — the chat UI gates
 /// new sends on `isGenerating`, so reusing a single slot is safe.
 #[derive(Default)]
 pub struct VisionRuntime {
-    child: Mutex<Option<CommandChild>>,
+    child: Mutex<Option<Child>>,
 }
 
 impl VisionRuntime {
     pub async fn cancel(&self) {
-        if let Some(child) = self.child.lock().await.take() {
-            let _ = child.kill();
+        if let Some(mut child) = self.child.lock().await.take() {
+            let _ = child.start_kill();
         }
     }
 }
@@ -208,7 +303,6 @@ impl VisionRuntime {
 /// hand temp-file paths (not raw bytes) to `llama-mtmd-cli` because that's
 /// the only image input shape it accepts on the CLI.
 fn write_image_to_tmp(tmpdir: &Path, idx: usize, data_url: &str) -> Result<PathBuf> {
-    // Accept either a full `data:image/...;base64,XXX` URL or raw base64.
     let (mime, b64) = if let Some(rest) = data_url.strip_prefix("data:") {
         let comma = rest
             .find(',')
@@ -266,6 +360,12 @@ pub async fn chat_with_images(
     if image_data_urls.is_empty() {
         return Err(anyhow!("chat_with_images called with no images"));
     }
+    let cli = mtmd_cli_path(&app)?;
+    if !cli.is_file() {
+        return Err(anyhow!(
+            "Vision support isn't installed yet. Open Settings → Local Vision and install the llama-mtmd-cli helper, then try again."
+        ));
+    }
 
     // Decode every image to a per-request temp dir so they're cleaned up
     // together when the dir is dropped at the end of this function.
@@ -280,85 +380,83 @@ pub async fn chat_with_images(
 
     // Build the argv. `--image` may be repeated. `-p` is the prompt.
     // `--temp`, `--top-p`, `-n` match the text-gen knobs the UI exposes.
-    // `--log-disable` keeps llama.cpp's chatty stderr out of our stdout
-    // stream so we don't accidentally surface init noise as tokens.
-    let mut args: Vec<String> = vec![
-        "-m".into(),
-        model_path.to_string_lossy().into_owned(),
-        "--mmproj".into(),
-        mmproj_path.to_string_lossy().into_owned(),
-        "-p".into(),
-        prompt,
-        "--temp".into(),
-        format!("{}", opts.temperature),
-        "--top-p".into(),
-        format!("{}", opts.top_p),
-        "-n".into(),
-        format!("{}", opts.max_tokens),
-        "--log-disable".into(),
-    ];
+    // `--log-disable` keeps llama.cpp's chatty stderr out of stdout so we
+    // don't surface init noise as tokens.
+    let mut cmd = Command::new(&cli);
+    cmd.arg("-m")
+        .arg(&model_path)
+        .arg("--mmproj")
+        .arg(&mmproj_path)
+        .arg("-p")
+        .arg(&prompt)
+        .arg("--temp")
+        .arg(format!("{}", opts.temperature))
+        .arg("--top-p")
+        .arg(format!("{}", opts.top_p))
+        .arg("-n")
+        .arg(format!("{}", opts.max_tokens))
+        .arg("--log-disable");
     for img in &image_paths {
-        args.push("--image".into());
-        args.push(img.to_string_lossy().into_owned());
+        cmd.arg("--image").arg(img);
+    }
+    cmd.stdout(Stdio::piped()).stderr(Stdio::null());
+    // On Windows, hide the console window the child would otherwise pop up.
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
     }
 
-    let shell = app.shell();
-    let cmd = shell
-        .sidecar("llama-mtmd-cli")
-        .map_err(|e| anyhow!("could not resolve llama-mtmd-cli sidecar: {e}"))?
-        .args(args)
-        .stderr(Stdio::null());
-
-    let (mut rx, child) = cmd
+    let mut child = cmd
         .spawn()
-        .map_err(|e| anyhow!("failed to spawn llama-mtmd-cli: {e}"))?;
+        .map_err(|e| anyhow!("failed to spawn llama-mtmd-cli at {cli:?}: {e}"))?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| anyhow!("llama-mtmd-cli stdout pipe unavailable"))?;
 
     // Stash the child so cancel_vision_chat can kill it.
     {
         let mut slot = runtime.child.lock().await;
-        if let Some(prev) = slot.take() {
-            // Defensive — shouldn't happen given the UI's isGenerating gate.
-            let _ = prev.kill();
+        if let Some(mut prev) = slot.take() {
+            let _ = prev.start_kill();
         }
         *slot = Some(child);
     }
 
     let mut full = String::new();
-    let mut exit_err: Option<String> = None;
-
-    while let Some(event) = rx.recv().await {
-        match event {
-            CommandEvent::Stdout(line) => {
-                let s = String::from_utf8_lossy(&line).to_string();
-                if !s.is_empty() {
-                    let _ = app.emit_to("main", "token", s.clone());
-                    full.push_str(&s);
-                }
-            }
-            CommandEvent::Stderr(_) => {
-                // Intentionally swallowed — see --log-disable above. Stderr
-                // would otherwise leak llama.cpp init messages.
-            }
-            CommandEvent::Error(e) => {
-                exit_err = Some(e);
-                break;
-            }
-            CommandEvent::Terminated(payload) => {
-                if let Some(code) = payload.code {
-                    if code != 0 {
-                        exit_err = Some(format!(
-                            "llama-mtmd-cli exited with code {code}"
-                        ));
-                    }
-                }
-                break;
-            }
-            _ => {}
+    let mut reader = BufReader::new(stdout);
+    let mut buf = [0u8; 1024];
+    use tokio::io::AsyncReadExt;
+    loop {
+        let n = reader
+            .read(&mut buf)
+            .await
+            .context("read from llama-mtmd-cli stdout failed")?;
+        if n == 0 {
+            break;
+        }
+        let chunk = String::from_utf8_lossy(&buf[..n]).to_string();
+        if !chunk.is_empty() {
+            let _ = app.emit_to("main", "token", chunk.clone());
+            full.push_str(&chunk);
         }
     }
 
-    // Clear the runtime slot so future runs aren't blocked on a dead child.
-    *runtime.child.lock().await = None;
+    // Reap the child (if not already reaped via cancel).
+    let exit_err = {
+        let mut slot = runtime.child.lock().await;
+        if let Some(mut child) = slot.take() {
+            match child.wait().await {
+                Ok(status) if status.success() => None,
+                Ok(status) => Some(format!("llama-mtmd-cli exited with {status}")),
+                Err(e) => Some(format!("waiting on llama-mtmd-cli failed: {e}")),
+            }
+        } else {
+            None
+        }
+    };
 
     drop(tmp);
 
