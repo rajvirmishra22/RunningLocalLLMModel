@@ -478,10 +478,26 @@ export default function Models() {
               const tooBig =
                 customSupported && systemRamGb != null && m.minRamGb > systemRamGb;
               const isBundled = m.id === BUNDLED_MODEL_ID;
+              const isDownloaded = downloadedIds.has(m.id);
+              const onDiskBytes = downloadedSizes.get(m.id) ?? null;
+              const sizeBytes = m.sizeMb * 1024 * 1024;
+              // Projected free-disk after this download lands. Bundled and
+              // already-downloaded entries don't consume new space.
+              const projectedFreeBytes =
+                headerDiskInfo != null && !isDownloaded && !isBundled
+                  ? headerDiskInfo.freeBytes - sizeBytes
+                  : null;
+              const wouldExhaustDisk =
+                projectedFreeBytes != null && projectedFreeBytes < 0;
+              const wouldGoLow =
+                projectedFreeBytes != null &&
+                projectedFreeBytes >= 0 &&
+                projectedFreeBytes < LOW_DISK_THRESHOLD_BYTES;
               return (
                 <div
                   key={m.id}
                   className="flex items-center justify-between p-3 rounded-md border border-border"
+                  data-testid={`catalog-card-${m.id}`}
                 >
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-1.5 flex-wrap">
@@ -504,9 +520,63 @@ export default function Models() {
                           may not fit
                         </span>
                       )}
+                      {wouldExhaustDisk && (
+                        <span
+                          className="text-[9px] px-1 py-px rounded bg-red-500/10 text-red-500 border border-red-500/20 font-medium"
+                          title={`This download is larger than the ${formatBytes(headerDiskInfo!.freeBytes)} free on this drive.`}
+                          data-testid={`catalog-disk-exhaust-${m.id}`}
+                        >
+                          won't fit on disk
+                        </span>
+                      )}
+                      {wouldGoLow && (
+                        <span
+                          className="text-[9px] px-1 py-px rounded bg-yellow-500/10 text-yellow-500 border border-yellow-500/20 font-medium"
+                          title={`Downloading this would leave only ${formatBytes(projectedFreeBytes!)} free.`}
+                          data-testid={`catalog-disk-low-${m.id}`}
+                        >
+                          low disk after
+                        </span>
+                      )}
                     </div>
                     <p className="text-[10px] text-muted-foreground mt-0.5">
-                      {(m.sizeMb / 1000).toFixed(1)} GB · {m.description}
+                      {isDownloaded && onDiskBytes != null ? (
+                        <span data-testid={`catalog-on-disk-${m.id}`}>
+                          on disk: {formatBytes(onDiskBytes)}
+                        </span>
+                      ) : isDownloaded && isBundled ? (
+                        <span>bundled with the app</span>
+                      ) : (
+                        <span data-testid={`catalog-size-${m.id}`}>
+                          {(m.sizeMb / 1000).toFixed(1)} GB
+                          {projectedFreeBytes != null && !wouldExhaustDisk && (
+                            <>
+                              {" · "}
+                              <span
+                                className={
+                                  wouldGoLow ? "text-yellow-500" : ""
+                                }
+                                data-testid={`catalog-projected-free-${m.id}`}
+                              >
+                                {formatBytes(projectedFreeBytes)} free after
+                              </span>
+                            </>
+                          )}
+                          {wouldExhaustDisk && headerDiskInfo != null && (
+                            <>
+                              {" · "}
+                              <span
+                                className="text-red-500"
+                                data-testid={`catalog-projected-free-${m.id}`}
+                              >
+                                only {formatBytes(headerDiskInfo.freeBytes)} free
+                              </span>
+                            </>
+                          )}
+                        </span>
+                      )}
+                      {" · "}
+                      {m.description}
                     </p>
                   </div>
                   <div className="flex items-center gap-1 ml-2 flex-shrink-0">
