@@ -97,6 +97,34 @@ const compatColors: Record<string, string> = {
 
 const BUNDLED_MODEL_ID = "Llama-3.2-1B-Instruct-q4f32_1-MLC";
 
+/** localStorage key for the persisted FIFO download queue. Bumping the
+ *  suffix here invalidates any older shape if we ever change it. */
+const DOWNLOAD_QUEUE_STORAGE_KEY = "lms.download_queue.v1";
+
+function loadPersistedQueue(): string[] {
+  try {
+    const raw = localStorage.getItem(DOWNLOAD_QUEUE_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((x): x is string => typeof x === "string");
+  } catch {
+    return [];
+  }
+}
+
+function persistQueue(queue: string[]): void {
+  try {
+    if (queue.length === 0) {
+      localStorage.removeItem(DOWNLOAD_QUEUE_STORAGE_KEY);
+    } else {
+      localStorage.setItem(DOWNLOAD_QUEUE_STORAGE_KEY, JSON.stringify(queue));
+    }
+  } catch {
+    /* localStorage full or unavailable — fall through; runtime state still works. */
+  }
+}
+
 type DownloadState =
   | { kind: "idle" }
   | {
@@ -158,6 +186,10 @@ export default function Models() {
       if (next === queueRef.current) return next;
       queueRef.current = next;
       setQueue(next);
+      // Mirror the queue to localStorage so a quit/reload mid-download
+      // doesn't lose anything the user lined up. `persistQueue` clears
+      // the key when the list is empty so it doesn't ghost-rehydrate.
+      persistQueue(next);
       return next;
     },
     [],
@@ -405,6 +437,34 @@ export default function Models() {
     },
     [runDownload, mutateQueue],
   );
+
+  // Rehydrate any queue left behind by a previous session. The active
+  // download itself is not resumable here (separate task), but anything
+  // that was still waiting in line should come back and start running
+  // automatically since nothing else is downloading on a fresh mount.
+  const hydratedRef = useRef(false);
+  useEffect(() => {
+    if (hydratedRef.current) return;
+    hydratedRef.current = true;
+    const persisted = loadPersistedQueue();
+    if (persisted.length === 0) return;
+    // Show every restored item as "queued" immediately so the panel
+    // reflects the saved plan before the first download kicks off.
+    setDownloads((s) => {
+      const next = { ...s };
+      for (const id of persisted) {
+        if (!next[id] || next[id].kind === "idle") {
+          next[id] = { kind: "queued" };
+        }
+      }
+      return next;
+    });
+    // Pop the head and start it; the rest stay queued and `runDownload`'s
+    // finally-block will drain them one at a time as usual.
+    const [head, ...rest] = persisted;
+    mutateQueue(() => rest);
+    void runDownload(head);
+  }, [runDownload, mutateQueue]);
 
   const handleDownload = async (modelId: string) => {
     const model = fullCatalog.find((m) => m.id === modelId);
