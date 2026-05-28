@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Trash2, Shield, Info, HardDrive, Cloud, Eye, EyeOff, CheckCircle2, XCircle, Loader2, ExternalLink } from "lucide-react";
+import { Trash2, Shield, Info, HardDrive, Cloud, Eye, EyeOff, CheckCircle2, XCircle, Loader2, ExternalLink, HelpCircle, ChevronDown } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
@@ -93,24 +93,8 @@ export default function Settings() {
               </p>
               <p className="text-amber-500/90">
                 <strong>Heads up:</strong> A ChatGPT Plus or Claude Pro subscription does <em>not</em> give third-party
-                apps access. Only a developer API key (billed per token) works. Get one at{" "}
-                <a
-                  href="https://platform.openai.com/api-keys"
-                  target="_blank"
-                  rel="noreferrer"
-                  className="underline hover:text-foreground inline-flex items-center gap-0.5"
-                >
-                  platform.openai.com <ExternalLink className="w-2.5 h-2.5" />
-                </a>{" "}
-                or{" "}
-                <a
-                  href="https://console.anthropic.com/settings/keys"
-                  target="_blank"
-                  rel="noreferrer"
-                  className="underline hover:text-foreground inline-flex items-center gap-0.5"
-                >
-                  console.anthropic.com <ExternalLink className="w-2.5 h-2.5" />
-                </a>.
+                apps access. Only a developer API key (billed per token) works — see the "How do I get a key?" link under
+                each provider below.
               </p>
             </div>
 
@@ -242,6 +226,80 @@ function ProviderRow({
 }) {
   const [showKey, setShowKey] = useState(false);
   const [status, setStatus] = useState<TestStatus>({ state: "idle" });
+  const [showHelp, setShowHelp] = useState(false);
+
+  const help =
+    provider === "openai"
+      ? {
+          consoleUrl: "https://platform.openai.com/api-keys",
+          consoleLabel: "platform.openai.com/api-keys",
+          billingUrl: "https://platform.openai.com/settings/organization/billing/overview",
+          billingLabel: "platform.openai.com → Billing",
+          prefix: "sk-",
+          steps: [
+            <>
+              Open{" "}
+              <a
+                href="https://platform.openai.com/api-keys"
+                target="_blank"
+                rel="noreferrer"
+                className="underline hover:text-foreground inline-flex items-center gap-0.5"
+              >
+                platform.openai.com/api-keys <ExternalLink className="w-2.5 h-2.5" />
+              </a>{" "}
+              and sign in. This is the <em>developer</em> dashboard, not chat.openai.com.
+            </>,
+            <>
+              If this is your first key, click your profile in the top-right →{" "}
+              <strong>Billing</strong> and add a payment method or buy a small credit (a
+              few dollars is enough to start). API access stays disabled without it.
+            </>,
+            <>
+              Back on the API keys page, click <strong>"Create new secret key"</strong>.
+              Give it a name like <em>LocalModel Studio</em>. Leave permissions on "All".
+            </>,
+            <>
+              Copy the key (starts with <code className="text-[10px] bg-muted px-1 py-0.5 rounded">sk-</code>) —
+              OpenAI only shows it <strong>once</strong>. Paste it into the API Key field
+              below and click <strong>Test</strong>.
+            </>,
+          ],
+        }
+      : {
+          consoleUrl: "https://console.anthropic.com/settings/keys",
+          consoleLabel: "console.anthropic.com/settings/keys",
+          billingUrl: "https://console.anthropic.com/settings/billing",
+          billingLabel: "console.anthropic.com → Plans & Billing",
+          prefix: "sk-ant-",
+          steps: [
+            <>
+              Open{" "}
+              <a
+                href="https://console.anthropic.com/settings/keys"
+                target="_blank"
+                rel="noreferrer"
+                className="underline hover:text-foreground inline-flex items-center gap-0.5"
+              >
+                console.anthropic.com/settings/keys <ExternalLink className="w-2.5 h-2.5" />
+              </a>{" "}
+              and sign in. This is the <em>developer console</em>, not claude.ai.
+            </>,
+            <>
+              First time only: go to <strong>Plans & Billing</strong> in the left sidebar
+              and buy a small credit pack (Anthropic requires prepaid credit before the
+              API will respond — a Claude Pro subscription does <em>not</em> count).
+            </>,
+            <>
+              Back on the API Keys page, click <strong>"Create Key"</strong>. Give it a
+              name like <em>LocalModel Studio</em> and leave it on the default workspace.
+            </>,
+            <>
+              Copy the key (starts with <code className="text-[10px] bg-muted px-1 py-0.5 rounded">sk-ant-</code>) —
+              Anthropic only shows it <strong>once</strong>. Paste it into the API Key
+              field below and click <strong>Test</strong>.
+            </>,
+          ],
+        };
 
   const keyField = provider === "openai" ? "openaiKey" : "anthropicKey";
   const modelField = provider === "openai" ? "openaiModel" : "anthropicModel";
@@ -264,7 +322,22 @@ function ProviderRow({
   return (
     <div className="space-y-2.5" data-testid={`provider-row-${provider}`}>
       <div className="flex items-center justify-between">
-        <p className="text-sm font-medium">{label}</p>
+        <div className="flex items-center gap-2">
+          <p className="text-sm font-medium">{label}</p>
+          <button
+            type="button"
+            onClick={() => setShowHelp((s) => !s)}
+            className="text-[11px] text-muted-foreground hover:text-foreground inline-flex items-center gap-1 underline-offset-2 hover:underline"
+            data-testid={`btn-${provider}-help`}
+            aria-expanded={showHelp}
+          >
+            <HelpCircle className="w-3 h-3" />
+            How do I get a key?
+            <ChevronDown
+              className={`w-3 h-3 transition-transform ${showHelp ? "rotate-180" : ""}`}
+            />
+          </button>
+        </div>
         {key.trim().length > 0 ? (
           <span className="text-[10px] px-2 py-0.5 rounded-full bg-green-500/10 text-green-500 border border-green-500/20">
             Key set
@@ -275,6 +348,48 @@ function ProviderRow({
           </span>
         )}
       </div>
+
+      {showHelp && (
+        <div
+          className="rounded-md border border-border bg-muted/30 p-3 space-y-2"
+          data-testid={`help-${provider}`}
+        >
+          <p className="text-[11px] font-medium text-foreground">
+            Get a {label} developer API key
+          </p>
+          <ol className="space-y-1.5 text-[11px] text-muted-foreground list-decimal pl-4 marker:text-muted-foreground/70">
+            {help.steps.map((step, i) => (
+              <li key={i} className="leading-snug">
+                {step}
+              </li>
+            ))}
+          </ol>
+          <div className="flex flex-wrap gap-3 pt-1 text-[10px]">
+            <a
+              href={help.consoleUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1 text-foreground/80 hover:text-foreground underline underline-offset-2"
+            >
+              <ExternalLink className="w-2.5 h-2.5" />
+              {help.consoleLabel}
+            </a>
+            <a
+              href={help.billingUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1 text-foreground/80 hover:text-foreground underline underline-offset-2"
+            >
+              <ExternalLink className="w-2.5 h-2.5" />
+              {help.billingLabel}
+            </a>
+          </div>
+          <p className="text-[10px] text-amber-500/90 pt-1">
+            Costs are billed by the provider per token used — not by us. A small
+            starter credit (≈ $5) is usually enough for thousands of chat messages.
+          </p>
+        </div>
+      )}
 
       <div className="grid grid-cols-[1fr_auto_auto] gap-2 items-end">
         <div className="space-y-1">
