@@ -16,7 +16,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # Used by the RAG store to (de)serialize per-document index files.
 # (serde_json above is the runtime dep; this comment groups the RAG deps.)
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "fs", "io-util"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "fs", "io-util", "process"] }
 anyhow = "1"
 parking_lot = "0.12"
 

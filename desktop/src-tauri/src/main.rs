@@ -527,8 +527,9 @@ async fn chat_with_images(
 }
 
 #[tauri::command]
-async fn cancel_vision_chat(state: State<'_, AppState>) {
+async fn cancel_vision_chat(state: State<'_, AppState>) -> Result<(), ()> {
     state.vision.cancel().await;
+    Ok(())
 }
 
 #[tauri::command]
