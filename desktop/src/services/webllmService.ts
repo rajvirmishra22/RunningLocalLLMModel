@@ -15,6 +15,8 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 /** Supported chat-template families. Each catalog entry picks one. */
 export type ModelFamily = "llama3" | "qwen" | "phi3" | "mistral";
+/** Coarse grouping for the Models page UI. */
+export type ModelCategory = "general" | "coding" | "reasoning" | "vision";
 
 export interface WebLLMModel {
   id: string;
@@ -31,6 +33,18 @@ export interface WebLLMModel {
   url: string | null;
   /** True for user-added Hugging Face models (vs the built-in catalog). */
   custom?: boolean;
+  /** Grouping shown on the Models page; defaults to "general". */
+  category?: ModelCategory;
+  /** True if this model accepts images alongside text (needs an mmproj). */
+  vision?: boolean;
+  /**
+   * URL of the companion vision projector (CLIP) GGUF. Required when
+   * `vision === true` — both the LLM weights and the mmproj are downloaded
+   * together and stored next to each other on disk.
+   */
+  mmprojUrl?: string;
+  /** Approximate size of the mmproj download in MB (for UI/disk warnings). */
+  mmprojSizeMb?: number;
 }
 
 /**
@@ -39,6 +53,7 @@ export interface WebLLMModel {
  * (the bartowski conversions are the de-facto community standard).
  */
 export const WEBLLM_MODELS: WebLLMModel[] = [
+  // ─── General ──────────────────────────────────────────────────────────────
   {
     id: "Llama-3.2-1B-Instruct-q4f32_1-MLC",
     label: "Llama 3.2 1B",
@@ -47,6 +62,7 @@ export const WEBLLM_MODELS: WebLLMModel[] = [
     minRamGb: 2,
     family: "llama3",
     url: null,
+    category: "general",
   },
   {
     id: "Llama-3.2-3B-Instruct-q4f32_1-MLC",
@@ -56,6 +72,7 @@ export const WEBLLM_MODELS: WebLLMModel[] = [
     minRamGb: 4,
     family: "llama3",
     url: "https://huggingface.co/bartowski/Llama-3.2-3B-Instruct-GGUF/resolve/main/Llama-3.2-3B-Instruct-Q4_K_M.gguf",
+    category: "general",
   },
   {
     id: "Qwen2.5-1.5B-Instruct-q4f32_1-MLC",
@@ -65,6 +82,7 @@ export const WEBLLM_MODELS: WebLLMModel[] = [
     minRamGb: 3,
     family: "qwen",
     url: "https://huggingface.co/bartowski/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/Qwen2.5-1.5B-Instruct-Q4_K_M.gguf",
+    category: "general",
   },
   {
     id: "Qwen2.5-3B-Instruct-q4f32_1-MLC",
@@ -74,6 +92,7 @@ export const WEBLLM_MODELS: WebLLMModel[] = [
     minRamGb: 4,
     family: "qwen",
     url: "https://huggingface.co/bartowski/Qwen2.5-3B-Instruct-GGUF/resolve/main/Qwen2.5-3B-Instruct-Q4_K_M.gguf",
+    category: "general",
   },
   {
     id: "Phi-3.5-mini-instruct-q4f16_1-MLC",
@@ -83,6 +102,7 @@ export const WEBLLM_MODELS: WebLLMModel[] = [
     minRamGb: 4,
     family: "phi3",
     url: "https://huggingface.co/bartowski/Phi-3.5-mini-instruct-GGUF/resolve/main/Phi-3.5-mini-instruct-Q4_K_M.gguf",
+    category: "general",
   },
   {
     id: "Mistral-7B-Instruct-v0.3-q4f16_1-MLC",
@@ -92,15 +112,181 @@ export const WEBLLM_MODELS: WebLLMModel[] = [
     minRamGb: 6,
     family: "mistral",
     url: "https://huggingface.co/bartowski/Mistral-7B-Instruct-v0.3-GGUF/resolve/main/Mistral-7B-Instruct-v0.3-Q4_K_M.gguf",
+    category: "general",
+  },
+  {
+    id: "Qwen2.5-7B-Instruct-Q4_K_M",
+    label: "Qwen 2.5 7B",
+    sizeMb: 4680,
+    description: "Strong all-rounder. Notably good at non-English and structured output.",
+    minRamGb: 8,
+    family: "qwen",
+    url: "https://huggingface.co/bartowski/Qwen2.5-7B-Instruct-GGUF/resolve/main/Qwen2.5-7B-Instruct-Q4_K_M.gguf",
+    category: "general",
   },
   {
     id: "Llama-3.1-8B-Instruct-q4f32_1-MLC",
     label: "Llama 3.1 8B",
     sizeMb: 4920,
-    description: "Flagship 8B. Best quality of any model here; needs the most RAM.",
+    description: "Flagship 8B. Best quality of any small model here.",
     minRamGb: 8,
     family: "llama3",
     url: "https://huggingface.co/bartowski/Meta-Llama-3.1-8B-Instruct-GGUF/resolve/main/Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf",
+    category: "general",
+  },
+  {
+    id: "gemma-2-9b-it-Q4_K_M",
+    label: "Gemma 2 9B",
+    sizeMb: 5760,
+    description: "Google's open 9B. Polished, conversational, good for everyday chat.",
+    minRamGb: 10,
+    family: "llama3",
+    url: "https://huggingface.co/bartowski/gemma-2-9b-it-GGUF/resolve/main/gemma-2-9b-it-Q4_K_M.gguf",
+    category: "general",
+  },
+  {
+    id: "Mistral-Nemo-Instruct-2407-Q4_K_M",
+    label: "Mistral Nemo 12B",
+    sizeMb: 7480,
+    description: "12B with a 128K context window. Great for long documents.",
+    minRamGb: 12,
+    family: "mistral",
+    url: "https://huggingface.co/bartowski/Mistral-Nemo-Instruct-2407-GGUF/resolve/main/Mistral-Nemo-Instruct-2407-Q4_K_M.gguf",
+    category: "general",
+  },
+  {
+    id: "Qwen2.5-14B-Instruct-Q4_K_M",
+    label: "Qwen 2.5 14B",
+    sizeMb: 8990,
+    description: "Top-tier open 14B. Excellent reasoning; needs a real GPU or 16 GB RAM.",
+    minRamGb: 16,
+    family: "qwen",
+    url: "https://huggingface.co/bartowski/Qwen2.5-14B-Instruct-GGUF/resolve/main/Qwen2.5-14B-Instruct-Q4_K_M.gguf",
+    category: "general",
+  },
+
+  // ─── Coding ───────────────────────────────────────────────────────────────
+  {
+    id: "Qwen2.5-Coder-1.5B-Instruct-Q4_K_M",
+    label: "Qwen 2.5 Coder 1.5B",
+    sizeMb: 990,
+    description: "Tiny code model. Snappy autocomplete-style help on any laptop.",
+    minRamGb: 3,
+    family: "qwen",
+    url: "https://huggingface.co/bartowski/Qwen2.5-Coder-1.5B-Instruct-GGUF/resolve/main/Qwen2.5-Coder-1.5B-Instruct-Q4_K_M.gguf",
+    category: "coding",
+  },
+  {
+    id: "Qwen2.5-Coder-7B-Instruct-Q4_K_M",
+    label: "Qwen 2.5 Coder 7B",
+    sizeMb: 4680,
+    description: "Strongest open 7B coder. Great for writing, reviewing, refactoring code.",
+    minRamGb: 8,
+    family: "qwen",
+    url: "https://huggingface.co/bartowski/Qwen2.5-Coder-7B-Instruct-GGUF/resolve/main/Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf",
+    category: "coding",
+  },
+  {
+    id: "Qwen2.5-Coder-14B-Instruct-Q4_K_M",
+    label: "Qwen 2.5 Coder 14B",
+    sizeMb: 8990,
+    description: "Top open coding model. Rivals proprietary models on real-world dev tasks.",
+    minRamGb: 16,
+    family: "qwen",
+    url: "https://huggingface.co/bartowski/Qwen2.5-Coder-14B-Instruct-GGUF/resolve/main/Qwen2.5-Coder-14B-Instruct-Q4_K_M.gguf",
+    category: "coding",
+  },
+
+  // ─── Reasoning ────────────────────────────────────────────────────────────
+  {
+    id: "DeepSeek-R1-Distill-Qwen-7B-Q4_K_M",
+    label: "DeepSeek R1 Distill Qwen 7B",
+    sizeMb: 4680,
+    description: "Reasoning-tuned distill. Thinks step-by-step inside <think> blocks.",
+    minRamGb: 8,
+    family: "qwen",
+    url: "https://huggingface.co/bartowski/DeepSeek-R1-Distill-Qwen-7B-GGUF/resolve/main/DeepSeek-R1-Distill-Qwen-7B-Q4_K_M.gguf",
+    category: "reasoning",
+  },
+  {
+    id: "DeepSeek-R1-Distill-Llama-8B-Q4_K_M",
+    label: "DeepSeek R1 Distill Llama 8B",
+    sizeMb: 4920,
+    description: "Llama 3.1 8B fine-tuned for chain-of-thought reasoning.",
+    minRamGb: 8,
+    family: "llama3",
+    url: "https://huggingface.co/bartowski/DeepSeek-R1-Distill-Llama-8B-GGUF/resolve/main/DeepSeek-R1-Distill-Llama-8B-Q4_K_M.gguf",
+    category: "reasoning",
+  },
+
+  // ─── Vision ───────────────────────────────────────────────────────────────
+  // Vision models need TWO files: the LLM GGUF and a companion mmproj
+  // (CLIP-style image projector). Both are downloaded together. Chat against
+  // these models is routed through `llama-mtmd-cli` on the Rust side.
+  {
+    id: "Moondream2-Q4_K_M",
+    label: "Moondream 2 (1.8B Vision)",
+    sizeMb: 1100,
+    description: "Tiny, surprisingly capable vision model. Good first pick for image Q&A.",
+    minRamGb: 4,
+    family: "phi3",
+    url: "https://huggingface.co/vikhyatk/moondream2/resolve/main/moondream2-text-model-f16.gguf",
+    mmprojUrl: "https://huggingface.co/vikhyatk/moondream2/resolve/main/moondream2-mmproj-f16.gguf",
+    mmprojSizeMb: 910,
+    category: "vision",
+    vision: true,
+  },
+  {
+    id: "llava-1.6-mistral-7b-Q4_K_M",
+    label: "LLaVA 1.6 Mistral 7B (Vision)",
+    sizeMb: 4370,
+    description: "Battle-tested vision-LLM. Good general image understanding and OCR-lite.",
+    minRamGb: 8,
+    family: "mistral",
+    url: "https://huggingface.co/cjpais/llava-1.6-mistral-7b-gguf/resolve/main/llava-v1.6-mistral-7b.Q4_K_M.gguf",
+    mmprojUrl: "https://huggingface.co/cjpais/llava-1.6-mistral-7b-gguf/resolve/main/mmproj-model-f16.gguf",
+    mmprojSizeMb: 624,
+    category: "vision",
+    vision: true,
+  },
+  {
+    id: "MiniCPM-V-2_6-Q4_K_M",
+    label: "MiniCPM-V 2.6 (8B Vision)",
+    sizeMb: 5320,
+    description: "Strong open vision-LLM. Excellent at charts, screenshots, and dense scenes.",
+    minRamGb: 10,
+    family: "qwen",
+    url: "https://huggingface.co/openbmb/MiniCPM-V-2_6-gguf/resolve/main/ggml-model-Q4_K_M.gguf",
+    mmprojUrl: "https://huggingface.co/openbmb/MiniCPM-V-2_6-gguf/resolve/main/mmproj-model-f16.gguf",
+    mmprojSizeMb: 996,
+    category: "vision",
+    vision: true,
+  },
+  {
+    id: "Qwen2-VL-7B-Instruct-Q4_K_M",
+    label: "Qwen2-VL 7B (Vision)",
+    sizeMb: 4680,
+    description: "Multilingual vision-LLM. Great at text-in-image and document understanding.",
+    minRamGb: 10,
+    family: "qwen",
+    url: "https://huggingface.co/bartowski/Qwen2-VL-7B-Instruct-GGUF/resolve/main/Qwen2-VL-7B-Instruct-Q4_K_M.gguf",
+    mmprojUrl: "https://huggingface.co/bartowski/Qwen2-VL-7B-Instruct-GGUF/resolve/main/mmproj-Qwen2-VL-7B-Instruct-f16.gguf",
+    mmprojSizeMb: 1350,
+    category: "vision",
+    vision: true,
+  },
+  {
+    id: "gemma-3-4b-it-Q4_K_M",
+    label: "Gemma 3 4B (Vision)",
+    sizeMb: 2650,
+    description: "Google's small multimodal Gemma 3. Quick image Q&A with low RAM cost.",
+    minRamGb: 6,
+    family: "llama3",
+    url: "https://huggingface.co/ggml-org/gemma-3-4b-it-GGUF/resolve/main/gemma-3-4b-it-Q4_K_M.gguf",
+    mmprojUrl: "https://huggingface.co/ggml-org/gemma-3-4b-it-GGUF/resolve/main/mmproj-model-f16.gguf",
+    mmprojSizeMb: 850,
+    category: "vision",
+    vision: true,
   },
 ];
 
@@ -239,6 +425,10 @@ export interface AddCustomModelInput {
   minRamGb: number;
   family: ModelFamily;
   description?: string;
+  /** Mark this custom model as image-capable. Requires `mmprojUrl`. */
+  vision?: boolean;
+  mmprojUrl?: string;
+  mmprojSizeMb?: number;
 }
 
 export function addCustomModel(input: AddCustomModelInput): WebLLMModel {
@@ -247,6 +437,13 @@ export function addCustomModel(input: AddCustomModelInput): WebLLMModel {
   const url = input.url.trim();
   if (!/^https?:\/\//i.test(url)) {
     throw new Error("URL must start with http:// or https://");
+  }
+  const mmprojUrl = input.mmprojUrl?.trim() || undefined;
+  if (input.vision && !mmprojUrl) {
+    throw new Error("Vision models need an mmproj (image projector) URL.");
+  }
+  if (mmprojUrl && !/^https?:\/\//i.test(mmprojUrl)) {
+    throw new Error("mmproj URL must start with http:// or https://");
   }
 
   const list = loadCustomModels();
@@ -267,6 +464,12 @@ export function addCustomModel(input: AddCustomModelInput): WebLLMModel {
     family: input.family,
     url,
     custom: true,
+    category: input.vision ? "vision" : "general",
+    vision: input.vision || undefined,
+    mmprojUrl,
+    mmprojSizeMb: input.vision
+      ? Math.max(1, Math.round(input.mmprojSizeMb ?? 0)) || undefined
+      : undefined,
   };
   list.push(model);
   saveCustomModels(list);
@@ -617,6 +820,14 @@ export const webllmService = {
     }) => void,
     onError: (err: Error) => void,
     abortController: AbortController,
+    /**
+     * Optional image attachments (data URLs) for vision-capable models. The
+     * caller is expected to have already pre-resized them (see
+     * `services/imageAttach.ts`). When non-empty AND the model is flagged
+     * `vision`, generation is routed through the `llama-mtmd-cli` sidecar
+     * instead of the in-process text engine.
+     */
+    images?: string[],
   ): Promise<void> {
     if (loadedModelId !== modelId) {
       onError(new Error("Model not loaded. Load the model first."));
@@ -625,13 +836,15 @@ export const webllmService = {
 
     const model = getModelById(modelId);
     const family: ModelFamily = model?.family ?? "llama3";
+    const useVision = Boolean(model?.vision) && (images?.length ?? 0) > 0;
 
     const startTime = Date.now();
     let totalTokens = 0;
     let unlisten: UnlistenFn | undefined;
 
     const onAbort = () => {
-      void invoke("cancel_chat").catch(() => {
+      const cmd = useVision ? "cancel_vision_chat" : "cancel_chat";
+      void invoke(cmd).catch(() => {
         /* best-effort */
       });
     };
@@ -644,22 +857,56 @@ export const webllmService = {
         onToken(event.payload);
       });
 
-      const prompt = formatPrompt(family, messages);
+      if (useVision) {
+        // Make sure the companion mmproj (CLIP-style image projector) is on
+        // disk before we hand off to the sidecar — it's a separate download
+        // from the LLM GGUF and the Rust side hard-fails without it.
+        if (!model?.mmprojUrl) {
+          throw new Error(
+            "This vision model has no mmproj URL configured — cannot run image chat.",
+          );
+        }
+        const have = await invoke<boolean>("mmproj_is_downloaded", { modelId });
+        if (!have) {
+          onToken("[Downloading vision projector (one-time)…]\n");
+          await invoke<string>("download_mmproj", {
+            modelId,
+            url: model.mmprojUrl,
+          });
+        }
 
-      await invoke<string>("chat", {
-        prompt,
-        maxTokens: options.maxTokens ?? 2048,
-        temperature: options.temperature ?? 0.7,
-        topP: options.topP ?? 0.9,
-        stopStrings: stopTokensFor(family),
-      });
+        // The mtmd CLI expects the user prompt as a single string with image
+        // placeholders handled by --image flags, so we send only the last
+        // user message text (history is harder to thread through llama-mtmd
+        // safely and the sidecar is intended for single-turn image Q&A).
+        const lastUser = [...messages].reverse().find((m) => m.role === "user");
+        const promptText = lastUser?.content ?? "";
+
+        await invoke<string>("chat_with_images", {
+          modelId,
+          prompt: promptText,
+          images: images ?? [],
+          maxTokens: options.maxTokens ?? 512,
+          temperature: options.temperature ?? 0.7,
+          topP: options.topP ?? 0.9,
+        });
+      } else {
+        const prompt = formatPrompt(family, messages);
+        await invoke<string>("chat", {
+          prompt,
+          maxTokens: options.maxTokens ?? 2048,
+          temperature: options.temperature ?? 0.7,
+          topP: options.topP ?? 0.9,
+          stopStrings: stopTokensFor(family),
+        });
+      }
 
       const totalTimeMs = Date.now() - startTime;
       onDone({
         tokensPerSec: totalTokens > 0 ? (totalTokens / totalTimeMs) * 1000 : 0,
         totalTimeMs,
         modelUsed: modelId,
-        runtimeUsed: "llama.cpp",
+        runtimeUsed: useVision ? "llama-mtmd-cli" : "llama.cpp",
       });
     } catch (err: unknown) {
       if (abortController.signal.aborted) return;

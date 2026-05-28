@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { Link } from "wouter";
-import { Send, Square, Trash2, Plus, MessageSquare, Clock, Zap, Download, Loader2, AlertCircle, Globe, Sliders, Cloud, CloudOff, Paperclip, FileText, FileCode, FileSpreadsheet, X, BookOpen } from "lucide-react";
+import { Send, Square, Trash2, Plus, MessageSquare, Clock, Zap, Download, Loader2, AlertCircle, Globe, Sliders, Cloud, CloudOff, Paperclip, FileText, FileCode, FileSpreadsheet, X, BookOpen, ImageIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -14,14 +14,18 @@ import {
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import { storageService, Conversation, Message, ModelProfile, DEFAULT_GENERATION } from "@/services/storageService";
-import { webllmService, InitProgress } from "@/services/webllmService";
+import { webllmService, InitProgress, getCatalog } from "@/services/webllmService";
 import {
   loadCloudConfig,
   streamCloudChat,
   hasKey,
+  cloudModelSupportsVision,
   type CloudProvider,
   type CloudProviderConfig,
+  type CloudMessage,
+  type CloudContentPart,
 } from "@/services/cloudProviders";
+import { prepareImage, IMAGE_INPUT_ACCEPT, type PreparedImage } from "@/services/imageAttach";
 import {
   extractFile,
   buildAttachmentBlock,
@@ -104,9 +108,17 @@ export default function Chat() {
   const [attachments, setAttachments] = useState<AttachmentState[]>([]);
   const [attachError, setAttachError] = useState<string | null>(null);
   const [attaching, setAttaching] = useState(false);
+  // Image attachments are kept separate from file attachments because they
+  // travel through a different pathway: instead of being inlined / chunked
+  // into the prompt text, they're sent as native image parts to the vision
+  // model. Cleared after every send.
+  const [images, setImages] = useState<PreparedImage[]>([]);
+  const [imageError, setImageError] = useState<string | null>(null);
+  const [preparingImage, setPreparingImage] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const imageInputRef = useRef<HTMLInputElement>(null);
   const [sidebarWidth, setSidebarWidth] = useState<number>(() => readStoredSidebarWidth());
   const [isResizingSidebar, setIsResizingSidebar] = useState(false);
 
@@ -318,6 +330,28 @@ export default function Chat() {
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
+  const handleImagesPicked = async (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    setImageError(null);
+    setPreparingImage(true);
+    const prepared: PreparedImage[] = [];
+    for (const file of Array.from(files)) {
+      try {
+        prepared.push(await prepareImage(file));
+      } catch (e) {
+        setImageError(e instanceof Error ? e.message : String(e));
+      }
+    }
+    if (prepared.length > 0) setImages((prev) => [...prev, ...prepared]);
+    setPreparingImage(false);
+    if (imageInputRef.current) imageInputRef.current.value = "";
+  };
+
+  const removeImage = (idx: number) => {
+    setImages((prev) => prev.filter((_, i) => i !== idx));
+    setImageError(null);
+  };
+
   const removeAttachment = (idx: number) => {
     setAttachments((prev) => {
       const removed = prev[idx];
@@ -345,8 +379,34 @@ export default function Chat() {
     (a) => a.kind === "rag" && a.status === "indexing",
   );
 
+  /**
+   * Whether the *currently selected* model can accept image inputs. Drives
+   * the visibility of the image picker — we don't want to let the user
+   * attach a PNG to gpt-3.5 and then get a confusing error from the API.
+   *
+   * For cloud: pattern-match on the model id via cloudModelSupportsVision.
+   * For local: look the loaded model up in the catalog (built-ins +
+   * customs) and honour its `vision` flag.
+   */
+  const currentModelSupportsVision = (() => {
+    if (provider === "local") {
+      if (!selectedProfile) return false;
+      const entry = getCatalog().find(
+        (m) => m.id === selectedProfile.modelIdentifier,
+      );
+      return !!entry?.vision;
+    }
+    const cloudModel =
+      provider === "openai" ? cloudCfg.openaiModel : cloudCfg.anthropicModel;
+    return cloudModelSupportsVision(provider, cloudModel);
+  })();
+
   const sendMessage = async () => {
-    if ((!input.trim() && attachments.length === 0) || isGenerating) return;
+    if (
+      (!input.trim() && attachments.length === 0 && images.length === 0) ||
+      isGenerating
+    )
+      return;
     if (provider === "local" && (!selectedProfile || !webllmReady)) return;
     if (provider !== "local" && !cloudReady) return;
 
@@ -435,12 +495,18 @@ export default function Chat() {
       messages: [...conv.messages, userMsg],
     };
 
+    // Snapshot images at send time. We clear `images` state next, but the
+    // cloud request still needs the data URLs to build its multimodal parts.
+    const imagesForSend = images;
+
     storageService.saveConversation(updatedConv);
     setActiveConvId(updatedConv.id);
     loadData();
     setInput("");
     setAttachments([]);
     setAttachError(null);
+    setImages([]);
+    setImageError(null);
     setIsGenerating(true);
     setStreamingContent("");
 
@@ -451,6 +517,28 @@ export default function Chat() {
       role: m.role as "user" | "assistant",
       content: m.content,
     }));
+
+    /** Build the cloud-side message list, replacing the last user turn with
+     *  a parts array when images are attached. We only attach images to the
+     *  current user turn — past turns stay text-only since we don't persist
+     *  raw image data in conversation history (would balloon localStorage). */
+    const messagesForCloud: CloudMessage[] =
+      imagesForSend.length > 0
+        ? messagesForLLM.map((m, i) => {
+            if (i !== messagesForLLM.length - 1 || m.role !== "user") return m;
+            const parts: CloudContentPart[] = [
+              { type: "text", text: m.content },
+              ...imagesForSend.map(
+                (img): CloudContentPart => ({
+                  type: "image",
+                  dataUrl: img.dataUrl,
+                  mimeType: img.mimeType,
+                }),
+              ),
+            ];
+            return { role: m.role, content: parts };
+          })
+        : messagesForLLM;
 
     let fullContent = "";
 
@@ -519,7 +607,8 @@ export default function Chat() {
         onToken,
         (stats) => onDone(stats),
         onError,
-        controller
+        controller,
+        imagesForSend.map((img) => img.dataUrl)
       );
       return;
     }
@@ -552,7 +641,7 @@ export default function Chat() {
     await streamCloudChat(
       cloudProvider,
       cloudModel,
-      messagesForLLM,
+      messagesForCloud,
       cloudKey,
       {
         onToken,
@@ -578,10 +667,11 @@ export default function Chat() {
   };
 
   const canSend =
-    (input.trim().length > 0 || attachments.length > 0) &&
+    (input.trim().length > 0 || attachments.length > 0 || images.length > 0) &&
     !isAnyIndexing &&
     !isGenerating &&
     !attaching &&
+    !preparingImage &&
     (provider === "local" ? profiles.length > 0 && webllmReady : cloudReady);
 
   return (
@@ -840,10 +930,17 @@ export default function Chat() {
           <div className="max-w-2xl mx-auto">
             {/* Attachment chips — shown above the textarea so the user can see
                 what's about to be sent. */}
-            {(attachments.length > 0 || attachError) && (
+            {(attachments.length > 0 || images.length > 0 || attachError || imageError) && (
               <div className="mb-2 space-y-1.5">
-                {attachments.length > 0 && (
+                {(attachments.length > 0 || images.length > 0) && (
                   <div className="flex flex-wrap gap-1.5">
+                    {images.map((img, idx) => (
+                      <ImageChip
+                        key={`${img.name}-${idx}`}
+                        image={img}
+                        onRemove={() => removeImage(idx)}
+                      />
+                    ))}
                     {attachments.map((att, idx) => (
                       <AttachmentChip
                         key={`${att.file.name}-${idx}`}
@@ -865,6 +962,18 @@ export default function Chat() {
                     </button>
                   </div>
                 )}
+                {imageError && (
+                  <div className="flex items-start gap-1.5 text-[11px] text-red-500">
+                    <AlertCircle className="w-3 h-3 mt-0.5 flex-shrink-0" />
+                    <span className="flex-1">{imageError}</span>
+                    <button
+                      onClick={() => setImageError(null)}
+                      className="text-muted-foreground hover:text-foreground"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  </div>
+                )}
               </div>
             )}
 
@@ -876,6 +985,15 @@ export default function Chat() {
               className="hidden"
               onChange={(e) => void handleFilesPicked(e.target.files)}
               data-testid="input-file-attach"
+            />
+            <input
+              ref={imageInputRef}
+              type="file"
+              multiple
+              accept={IMAGE_INPUT_ACCEPT}
+              className="hidden"
+              onChange={(e) => void handleImagesPicked(e.target.files)}
+              data-testid="input-image-attach"
             />
 
             <div className="relative flex items-end gap-2">
@@ -893,6 +1011,22 @@ export default function Chat() {
                   <Paperclip className="w-4 h-4" />
                 )}
               </button>
+              {currentModelSupportsVision && (
+                <button
+                  type="button"
+                  onClick={() => imageInputRef.current?.click()}
+                  disabled={isGenerating || preparingImage}
+                  title="Attach an image (the model can see it)"
+                  data-testid="btn-attach-image"
+                  className="h-9 w-9 flex items-center justify-center rounded-md border border-purple-500/40 bg-purple-500/5 hover:bg-purple-500/15 text-purple-400 hover:text-purple-300 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex-shrink-0"
+                >
+                  {preparingImage ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <ImageIcon className="w-4 h-4" />
+                  )}
+                </button>
+              )}
               <Textarea
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
@@ -1078,6 +1212,48 @@ function StatBit({ icon, value }: { icon?: React.ReactNode; value: string }) {
       {icon}
       {value}
     </span>
+  );
+}
+
+function ImageChip({
+  image,
+  onRemove,
+}: {
+  image: PreparedImage;
+  onRemove: () => void;
+}) {
+  const sizeLabel =
+    image.byteSize < 1024
+      ? `${image.byteSize} B`
+      : image.byteSize < 1024 * 1024
+        ? `${(image.byteSize / 1024).toFixed(1)} KB`
+        : `${(image.byteSize / 1024 / 1024).toFixed(1)} MB`;
+  return (
+    <div
+      data-testid={`image-chip-${image.name}`}
+      title={`${image.name} — ${image.width}×${image.height}, ${sizeLabel}`}
+      className="flex items-center gap-1.5 rounded-md border border-purple-500/40 bg-purple-500/10 px-1.5 py-1 text-[11px] max-w-[220px]"
+    >
+      <img
+        src={image.dataUrl}
+        alt={image.name}
+        className="w-8 h-8 rounded object-cover flex-shrink-0"
+      />
+      <div className="flex flex-col min-w-0">
+        <span className="truncate text-purple-200">{image.name}</span>
+        <span className="text-[10px] text-purple-300/70">
+          {image.width}×{image.height} · {sizeLabel}
+        </span>
+      </div>
+      <button
+        type="button"
+        onClick={onRemove}
+        className="ml-1 text-purple-300/70 hover:text-purple-100 flex-shrink-0"
+        title="Remove image"
+      >
+        <X className="w-3 h-3" />
+      </button>
+    </div>
   );
 }
 

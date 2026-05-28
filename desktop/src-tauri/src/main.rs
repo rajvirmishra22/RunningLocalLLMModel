@@ -5,6 +5,7 @@ mod download;
 mod embeddings;
 mod inference;
 mod rag_store;
+mod vision;
 
 use download::{DownloadRegistry, DownloadedModel, ProbeResult};
 use embeddings::EmbedEngine;
@@ -19,6 +20,7 @@ use std::sync::{
 };
 use std::time::Duration;
 use tauri::{Emitter, Manager, State};
+use vision::{VisionOpts, VisionRuntime};
 
 #[derive(Default)]
 pub struct AppState {
@@ -31,6 +33,14 @@ pub struct AppState {
     /// True while the embeddings model is being downloaded so we can refuse
     /// concurrent download requests.
     embed_downloading: Arc<AtomicBool>,
+    /// Tracks the currently-running `llama-mtmd-cli` sidecar so cancel can
+    /// kill it. Distinct from `cancel` (which the in-process llama.cpp text
+    /// engine reads to abort generation between tokens).
+    vision: Arc<VisionRuntime>,
+    /// Per-model-id mmproj download cancellation flags. Lives alongside
+    /// `downloads` but separate so a model's GGUF and its mmproj can be
+    /// cancelled independently.
+    mmproj_downloads: DownloadRegistry,
 }
 
 #[derive(Serialize, Clone)]
@@ -430,6 +440,102 @@ fn rag_delete_document(app: tauri::AppHandle, doc_id: String) -> Result<(), Stri
     rag_store::delete_document(&app, &doc_id).map_err(|e| format!("{e:#}"))
 }
 
+// ---------------------------------------------------------------------------
+// Vision (mmproj) commands
+// ---------------------------------------------------------------------------
+
+#[derive(Serialize)]
+struct MmprojStatus {
+    downloaded: bool,
+    #[serde(rename = "sizeBytes")]
+    size_bytes: u64,
+    path: String,
+}
+
+#[tauri::command]
+fn mmproj_status(app: tauri::AppHandle, model_id: String) -> Result<MmprojStatus, String> {
+    let path = vision::mmproj_path(&app, &model_id).map_err(|e| format!("{e:#}"))?;
+    let (downloaded, size_bytes) = match std::fs::metadata(&path) {
+        Ok(m) => (true, m.len()),
+        Err(_) => (false, 0),
+    };
+    Ok(MmprojStatus {
+        downloaded,
+        size_bytes,
+        path: path.to_string_lossy().into_owned(),
+    })
+}
+
+#[tauri::command]
+async fn download_mmproj(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    model_id: String,
+    url: String,
+) -> Result<String, String> {
+    let cancel = state.mmproj_downloads.register(&model_id);
+    let result = vision::download_mmproj(app.clone(), model_id.clone(), url, cancel).await;
+    state.mmproj_downloads.remove(&model_id);
+    match result {
+        Ok(path) => Ok(path.to_string_lossy().into_owned()),
+        Err(e) => Err(format!("mmproj download failed: {e:#}")),
+    }
+}
+
+#[tauri::command]
+fn cancel_mmproj_download(state: State<'_, AppState>, model_id: String) {
+    state.mmproj_downloads.cancel(&model_id);
+}
+
+#[tauri::command]
+fn delete_mmproj(app: tauri::AppHandle, model_id: String) -> Result<(), String> {
+    let path = vision::mmproj_path(&app, &model_id).map_err(|e| format!("{e:#}"))?;
+    if path.is_file() {
+        std::fs::remove_file(&path).map_err(|e| format!("delete mmproj failed: {e}"))?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn chat_with_images(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    model_id: String,
+    prompt: String,
+    images: Vec<String>,
+    max_tokens: usize,
+    temperature: f32,
+    top_p: f32,
+) -> Result<String, String> {
+    // Resolve the model + mmproj paths. The model may be the bundled one
+    // (model_id == "bundled") or a downloaded GGUF; mmproj is always stored
+    // per-model-id in the mmproj dir.
+    let model_path = if model_id == "bundled" {
+        app.path()
+            .resolve("model.gguf", tauri::path::BaseDirectory::Resource)
+            .map_err(|e| format!("could not resolve bundled model path: {e}"))?
+    } else {
+        download::model_path(&app, &model_id).map_err(|e| format!("{e:#}"))?
+    };
+    let mmproj_path = vision::mmproj_path(&app, &model_id).map_err(|e| format!("{e:#}"))?;
+
+    let opts = VisionOpts { max_tokens, temperature, top_p };
+    let runtime = state.vision.clone();
+    vision::chat_with_images(app, runtime, model_path, mmproj_path, prompt, images, opts)
+        .await
+        .map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+async fn cancel_vision_chat(state: State<'_, AppState>) {
+    state.vision.cancel().await;
+}
+
+#[tauri::command]
+fn mmproj_is_downloaded(app: tauri::AppHandle, model_id: String) -> bool {
+    vision::is_mmproj_downloaded(&app, &model_id)
+}
+
 #[tauri::command]
 fn rag_retrieve(
     app: tauri::AppHandle,
@@ -464,6 +570,13 @@ fn main() {
             rag_list_documents,
             rag_delete_document,
             rag_retrieve,
+            mmproj_status,
+            mmproj_is_downloaded,
+            download_mmproj,
+            cancel_mmproj_download,
+            delete_mmproj,
+            chat_with_images,
+            cancel_vision_chat,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -9,6 +9,16 @@
     "core:event:allow-listen",
     "core:event:allow-unlisten",
     "core:path:default",
-    "core:window:default"
+    "core:window:default",
+    {
+      "identifier": "shell:allow-execute",
+      "allow": [
+        {
+          "name": "binaries/llama-mtmd-cli",
+          "sidecar": true,
+          "args": true
+        }
+      ]
+    }
   ]
 }

@@ -34,6 +34,12 @@ encoding_rs = "0.8"
 # download starts.
 fs2 = "0.4"
 
+# Used by vision.rs to materialise base64-encoded image attachments to disk
+# before handing them to the llama-mtmd-cli sidecar. tempfile cleans up the
+# scratch directory automatically when its handle is dropped.
+base64 = "0.22"
+tempfile = "3"
+
 # llama.cpp Rust bindings. Compiles llama.cpp from source on first build.
 # https://crates.io/crates/llama-cpp-2
 # Pinned to 0.1.146 — 0.1.54 embedded an older llama.cpp that can't load

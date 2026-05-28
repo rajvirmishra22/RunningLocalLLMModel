@@ -126,10 +126,61 @@ export function hasKey(cfg: CloudProviderConfig, provider: CloudProvider): boole
   return provider === "openai" ? cfg.openaiKey.trim().length > 0 : cfg.anthropicKey.trim().length > 0;
 }
 
+/** A piece of a multimodal user message. Text-only conversations only ever
+ *  use the `string` shortcut; vision-enabled chats pass a parts array. */
+export type CloudContentPart =
+  | { type: "text"; text: string }
+  | {
+      type: "image";
+      /** Full `data:image/...;base64,...` URL. Pre-resized client-side
+       *  before reaching this layer so we don't ship 12MP photos over the
+       *  wire and blow past provider request-size limits. */
+      dataUrl: string;
+      /** e.g. "image/jpeg" / "image/png" / "image/webp". Required by
+       *  Anthropic's `source.media_type` field. */
+      mimeType: string;
+    };
+
 /** Trimmed view of one chat turn — same shape both providers accept. */
 export interface CloudMessage {
   role: "user" | "assistant";
-  content: string;
+  /** Either a plain string (text-only) or a parts array (text + images). */
+  content: string | CloudContentPart[];
+}
+
+/**
+ * Whether the given model id is known to accept image inputs on the standard
+ * chat APIs. Conservative pattern-matches — when in doubt, return false and
+ * the chat UI hides the image picker. Custom IDs the user pastes won't match
+ * anything here, so the picker stays hidden unless they pick a known vision
+ * preset.
+ *
+ * OpenAI vision-capable: gpt-4o*, gpt-4.1*, gpt-4-turbo*, chatgpt-4o*, o4*,
+ * o3 (but NOT o3-mini), o1 (but NOT o1-mini / o1-preview).
+ *
+ * Anthropic vision-capable: all Claude 3.x and Claude 4.x models. (Only the
+ * older Claude 2 line was text-only, and we don't list those in presets.)
+ */
+export function cloudModelSupportsVision(
+  provider: CloudProvider,
+  model: string,
+): boolean {
+  const m = model.trim().toLowerCase();
+  if (!m) return false;
+  if (provider === "openai") {
+    if (/^gpt-4o(?!-mini-tts|-realtime|-audio)/.test(m)) return true;
+    if (/^chatgpt-4o/.test(m)) return true;
+    if (/^gpt-4\.1/.test(m)) return true;
+    if (/^gpt-4-turbo/.test(m)) return true;
+    if (/^o4(\b|-)/.test(m) && !m.startsWith("o4-mini-tts")) return true;
+    if (m === "o3" || m.startsWith("o3-2")) return true;
+    if (m === "o1" || m.startsWith("o1-2")) return true;
+    return false;
+  }
+  // Anthropic
+  if (/^claude-3/.test(m)) return true;
+  if (/^claude-(opus|sonnet|haiku)-4/.test(m)) return true;
+  return false;
 }
 
 export interface CloudStreamCallbacks {
@@ -222,7 +273,11 @@ function buildRequest(
         "Content-Type": "application/json",
         Authorization: `Bearer ${apiKey}`,
       },
-      body: { model, messages, stream: true },
+      body: {
+        model,
+        messages: messages.map(toOpenAIMessage),
+        stream: true,
+      },
     };
   }
 
@@ -238,8 +293,69 @@ function buildRequest(
       "anthropic-version": "2023-06-01",
       "anthropic-dangerous-direct-browser-access": "true",
     },
-    body: { model, messages, max_tokens: 4096, stream: true },
+    body: {
+      model,
+      messages: messages.map(toAnthropicMessage),
+      max_tokens: 4096,
+      stream: true,
+    },
   };
+}
+
+/** Strip the `data:<mime>;base64,` prefix off a data URL and return the raw
+ *  base64 payload. Anthropic wants the base64 alone (with media_type sent
+ *  separately); OpenAI wants the full data URL. */
+function stripDataUrlPrefix(dataUrl: string): string {
+  const comma = dataUrl.indexOf(",");
+  return comma >= 0 ? dataUrl.slice(comma + 1) : dataUrl;
+}
+
+function toOpenAIMessage(m: CloudMessage): unknown {
+  // String shortcut — OpenAI accepts plain strings as `content` for either role.
+  if (typeof m.content === "string") {
+    return { role: m.role, content: m.content };
+  }
+  // Assistant messages must be text-only on OpenAI; flatten parts to a single
+  // string. (User messages keep the array shape so images survive.)
+  if (m.role === "assistant") {
+    const text = m.content
+      .filter((p): p is { type: "text"; text: string } => p.type === "text")
+      .map((p) => p.text)
+      .join("\n");
+    return { role: m.role, content: text };
+  }
+  const parts = m.content.map((p) =>
+    p.type === "text"
+      ? { type: "text", text: p.text }
+      : { type: "image_url", image_url: { url: p.dataUrl } },
+  );
+  return { role: m.role, content: parts };
+}
+
+function toAnthropicMessage(m: CloudMessage): unknown {
+  if (typeof m.content === "string") {
+    return { role: m.role, content: m.content };
+  }
+  if (m.role === "assistant") {
+    const text = m.content
+      .filter((p): p is { type: "text"; text: string } => p.type === "text")
+      .map((p) => p.text)
+      .join("\n");
+    return { role: m.role, content: text };
+  }
+  const parts = m.content.map((p) =>
+    p.type === "text"
+      ? { type: "text", text: p.text }
+      : {
+          type: "image",
+          source: {
+            type: "base64",
+            media_type: p.mimeType,
+            data: stripDataUrlPrefix(p.dataUrl),
+          },
+        },
+  );
+  return { role: m.role, content: parts };
 }
 
 /**

@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback, useRef } from "react";
+import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
   Plus,
@@ -11,6 +11,10 @@ import {
   Download,
   CheckCircle2,
   HardDrive,
+  Eye,
+  Brain,
+  Code2,
+  Sparkles,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -37,6 +41,7 @@ import {
   WEBLLM_MODELS,
   type WebLLMModel,
   type ModelFamily,
+  type ModelCategory,
   type InitProgress,
   isCustomCatalogSupported,
   getCatalog,
@@ -637,8 +642,9 @@ export default function Models() {
               </Button>
             )}
           </div>
-          <div className="grid grid-cols-2 gap-2">
-            {fullCatalog.map((m) => {
+          <CatalogSections
+            models={fullCatalog}
+            renderCard={(m) => {
               const added = profiles.some((p) => p.modelIdentifier === m.id);
               const tooBig =
                 customSupported && systemRamGb != null && m.minRamGb > systemRamGb;
@@ -675,6 +681,16 @@ export default function Models() {
                       {m.custom && (
                         <span className="text-[9px] px-1 py-px rounded bg-primary/10 text-primary border border-primary/20 font-medium">
                           custom
+                        </span>
+                      )}
+                      {m.vision && (
+                        <span
+                          className="inline-flex items-center gap-0.5 text-[9px] px-1 py-px rounded bg-purple-500/10 text-purple-400 border border-purple-500/20 font-medium"
+                          title="This model can view images alongside text."
+                          data-testid={`catalog-vision-badge-${m.id}`}
+                        >
+                          <Eye className="w-2.5 h-2.5" />
+                          can see images
                         </span>
                       )}
                       {tooBig && (
@@ -768,8 +784,8 @@ export default function Models() {
                   </div>
                 </div>
               );
-            })}
-          </div>
+            }}
+          />
         </section>
       </div>
 
@@ -1225,6 +1241,11 @@ function AddCustomModelDialog({
   const [probing, setProbing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [probed, setProbed] = useState(false);
+  const [vision, setVision] = useState(false);
+  const [mmprojUrl, setMmprojUrl] = useState("");
+  const [mmprojSizeMb, setMmprojSizeMb] = useState<number | null>(null);
+  const [mmprojProbing, setMmprojProbing] = useState(false);
+  const [mmprojProbed, setMmprojProbed] = useState(false);
 
   useEffect(() => {
     if (!open) {
@@ -1238,6 +1259,11 @@ function AddCustomModelDialog({
       setProbing(false);
       setError(null);
       setProbed(false);
+      setVision(false);
+      setMmprojUrl("");
+      setMmprojSizeMb(null);
+      setMmprojProbing(false);
+      setMmprojProbed(false);
     }
   }, [open]);
 
@@ -1270,11 +1296,36 @@ function AddCustomModelDialog({
       setMinRamGb(suggestMinRamGb(mb || 1));
       if (!label) setLabel(deriveLabelFromUrl(result.finalUrl) || deriveLabelFromUrl(trimmedUrl));
       setFamily(detectFamily(result.finalUrl || trimmedUrl));
+      // Auto-detect vision from the filename so the user doesn't have to
+      // tick the box manually for obvious cases (Qwen2-VL, LLaVA, MiniCPM-V,
+      // Moondream, Llama 3.2 Vision, etc.).
+      const visionRegex = /(vl|vision|llava|minicpm-v|moondream|llava[-_]?next)/i;
+      if (visionRegex.test(result.finalUrl || trimmedUrl)) {
+        setVision(true);
+      }
       setProbed(true);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setProbing(false);
+    }
+  };
+
+  const trimmedMmprojUrl = mmprojUrl.trim();
+  const mmprojUrlValid = /^https?:\/\//i.test(trimmedMmprojUrl);
+
+  const handleProbeMmproj = async () => {
+    setError(null);
+    setMmprojProbing(true);
+    try {
+      const result = await probeModelUrl(trimmedMmprojUrl);
+      const mb = Math.round(result.sizeBytes / (1024 * 1024));
+      setMmprojSizeMb(mb);
+      setMmprojProbed(true);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setMmprojProbing(false);
     }
   };
 
@@ -1288,6 +1339,9 @@ function AddCustomModelDialog({
         minRamGb,
         family,
         description: description.trim() || undefined,
+        vision: vision || undefined,
+        mmprojUrl: vision ? trimmedMmprojUrl : undefined,
+        mmprojSizeMb: vision ? mmprojSizeMb ?? undefined : undefined,
       });
       onAdded();
     } catch (e: unknown) {
@@ -1296,7 +1350,11 @@ function AddCustomModelDialog({
   };
 
   const canSave =
-    urlValid && label.trim().length > 0 && sizeMb != null && !duplicateLabel;
+    urlValid &&
+    label.trim().length > 0 &&
+    sizeMb != null &&
+    !duplicateLabel &&
+    (!vision || mmprojUrlValid);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -1413,6 +1471,85 @@ function AddCustomModelDialog({
               className="h-8 text-sm"
               data-testid="input-custom-description"
             />
+          </div>
+
+          <div className="rounded-md border border-border p-3 space-y-2 bg-muted/20">
+            <label className="flex items-start gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={vision}
+                onChange={(e) => {
+                  setVision(e.target.checked);
+                  if (!e.target.checked) {
+                    setMmprojUrl("");
+                    setMmprojSizeMb(null);
+                    setMmprojProbed(false);
+                  }
+                }}
+                className="mt-0.5"
+                data-testid="checkbox-custom-vision"
+              />
+              <div className="min-w-0">
+                <p className="text-xs font-medium flex items-center gap-1.5">
+                  <Eye className="w-3 h-3 text-purple-400" />
+                  This model can view images
+                </p>
+                <p className="text-[10px] text-muted-foreground mt-0.5">
+                  Tick this for multimodal builds (LLaVA, Qwen2-VL, MiniCPM-V,
+                  Moondream, Llama 3.2 Vision…). You'll need to paste the
+                  matching <span className="font-mono">mmproj-*.gguf</span> URL
+                  too — that's the small vision adapter that lets the text
+                  model understand pixels.
+                </p>
+              </div>
+            </label>
+
+            {vision && (
+              <div className="space-y-1.5 pt-1">
+                <Label className="text-xs">mmproj file URL</Label>
+                <div className="flex gap-2">
+                  <Input
+                    value={mmprojUrl}
+                    onChange={(e) => {
+                      setMmprojUrl(e.target.value);
+                      setMmprojProbed(false);
+                      setMmprojSizeMb(null);
+                    }}
+                    placeholder="https://huggingface.co/.../mmproj-model-f16.gguf"
+                    className="h-8 text-xs font-mono"
+                    data-testid="input-custom-mmproj-url"
+                  />
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-8 px-3 text-xs flex-shrink-0"
+                    disabled={!mmprojUrlValid || mmprojProbing}
+                    onClick={() => void handleProbeMmproj()}
+                    data-testid="btn-probe-mmproj-url"
+                  >
+                    {mmprojProbing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "Check"}
+                  </Button>
+                </div>
+                {mmprojProbed && mmprojSizeMb != null && (
+                  <p className="text-[10px] text-muted-foreground">
+                    mmproj size:{" "}
+                    <span className="font-mono">
+                      {mmprojSizeMb > 0
+                        ? `${(mmprojSizeMb / 1024).toFixed(2)} GB`
+                        : "unknown"}
+                    </span>
+                    {" · downloaded alongside the model the first time you chat with it."}
+                  </p>
+                )}
+                {!mmprojProbed && (
+                  <p className="text-[10px] text-muted-foreground">
+                    Usually lives in the same repo as the main GGUF, named
+                    something like{" "}
+                    <span className="font-mono">mmproj-model-f16.gguf</span>.
+                  </p>
+                )}
+              </div>
+            )}
           </div>
 
           {error && (
@@ -1644,6 +1781,83 @@ function EmptyState({ message }: { message: string }) {
   return (
     <div className="flex items-center justify-center py-8 rounded-lg border border-dashed border-border">
       <p className="text-xs text-muted-foreground">{message}</p>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// CatalogSections — groups catalog entries by category (General / Coding /
+// Reasoning / Vision) with a header and an icon per section. Custom models
+// flow into whichever category their `category` field set (defaults to
+// "general" / "vision" depending on the vision flag in addCustomModel).
+// ---------------------------------------------------------------------------
+
+const CATEGORY_ORDER: ModelCategory[] = ["general", "coding", "reasoning", "vision"];
+
+const CATEGORY_META: Record<ModelCategory, { label: string; blurb: string; Icon: typeof Sparkles }> = {
+  general: {
+    label: "General",
+    blurb: "Great default chat models. Pick based on how much RAM you have.",
+    Icon: Sparkles,
+  },
+  coding: {
+    label: "Coding",
+    blurb: "Fine-tuned for writing, reviewing and refactoring code.",
+    Icon: Code2,
+  },
+  reasoning: {
+    label: "Reasoning",
+    blurb: "Step-by-step thinkers. Slower per token, sharper on hard questions.",
+    Icon: Brain,
+  },
+  vision: {
+    label: "Vision",
+    blurb: "Models that can look at images you attach in chat.",
+    Icon: Eye,
+  },
+};
+
+function CatalogSections({
+  models,
+  renderCard,
+}: {
+  models: WebLLMModel[];
+  renderCard: (m: WebLLMModel) => React.ReactNode;
+}) {
+  const grouped = useMemo(() => {
+    const out = new Map<ModelCategory, WebLLMModel[]>();
+    for (const m of models) {
+      const cat: ModelCategory = m.category ?? (m.vision ? "vision" : "general");
+      const arr = out.get(cat) ?? [];
+      arr.push(m);
+      out.set(cat, arr);
+    }
+    return out;
+  }, [models]);
+
+  return (
+    <div className="space-y-5">
+      {CATEGORY_ORDER.map((cat) => {
+        const list = grouped.get(cat);
+        if (!list || list.length === 0) return null;
+        const { label, blurb, Icon } = CATEGORY_META[cat];
+        return (
+          <div key={cat} data-testid={`catalog-section-${cat}`}>
+            <div className="flex items-center gap-2 mb-2">
+              <Icon className="w-3.5 h-3.5 text-muted-foreground" />
+              <h3 className="text-xs font-semibold">{label}</h3>
+              <span className="text-[10px] text-muted-foreground font-normal">
+                · {blurb}
+              </span>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              {list.map((m) => (
+                <React.Fragment key={m.id}>{renderCard(m)}</React.Fragment>
+              ))}
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }

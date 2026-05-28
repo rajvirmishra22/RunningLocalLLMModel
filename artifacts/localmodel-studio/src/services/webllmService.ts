@@ -6,6 +6,7 @@ import * as webllm from "@mlc-ai/web-llm";
  * WebLLM uses its own bundled chat template per MLC model id.
  */
 export type ModelFamily = "llama3" | "qwen" | "phi3" | "mistral";
+export type ModelCategory = "general" | "coding" | "reasoning" | "vision";
 
 export interface WebLLMModel {
   id: string;
@@ -16,6 +17,16 @@ export interface WebLLMModel {
   family?: ModelFamily;
   url?: string | null;
   custom?: boolean;
+  /** Grouping shown on the Models page; defaults to "general". */
+  category?: ModelCategory;
+  /** True if this model can accept images alongside text. */
+  vision?: boolean;
+  /**
+   * Companion vision projector (CLIP). Only meaningful for vision models on
+   * the desktop build — the in-browser build doesn't run native vision yet.
+   */
+  mmprojUrl?: string;
+  mmprojSizeMb?: number;
 }
 
 export const WEBLLM_MODELS: WebLLMModel[] = [
@@ -25,6 +36,7 @@ export const WEBLLM_MODELS: WebLLMModel[] = [
     sizeMb: 700,
     description: "Smallest option. Runs on almost any device with WebGPU.",
     minRamGb: 2,
+    category: "general",
   },
   {
     id: "Llama-3.2-3B-Instruct-q4f32_1-MLC",
@@ -32,6 +44,7 @@ export const WEBLLM_MODELS: WebLLMModel[] = [
     sizeMb: 1800,
     description: "Good balance of quality and speed for browser inference.",
     minRamGb: 4,
+    category: "general",
   },
   {
     id: "Qwen2.5-1.5B-Instruct-q4f32_1-MLC",
@@ -39,6 +52,7 @@ export const WEBLLM_MODELS: WebLLMModel[] = [
     sizeMb: 1000,
     description: "Compact multilingual model, strong at instruction following.",
     minRamGb: 3,
+    category: "general",
   },
   {
     id: "Qwen2.5-3B-Instruct-q4f32_1-MLC",
@@ -46,6 +60,7 @@ export const WEBLLM_MODELS: WebLLMModel[] = [
     sizeMb: 2000,
     description: "Solid quality with good reasoning and code capability.",
     minRamGb: 4,
+    category: "general",
   },
   {
     id: "Phi-3.5-mini-instruct-q4f16_1-MLC",
@@ -53,6 +68,31 @@ export const WEBLLM_MODELS: WebLLMModel[] = [
     sizeMb: 2200,
     description: "Microsoft's efficient small model, great instruction following.",
     minRamGb: 4,
+    category: "general",
+  },
+  {
+    id: "Qwen2.5-Coder-1.5B-Instruct-q4f16_1-MLC",
+    label: "Qwen 2.5 Coder 1.5B",
+    sizeMb: 950,
+    description: "Tiny code-focused model. Great for autocomplete-style help in the browser.",
+    minRamGb: 3,
+    category: "coding",
+  },
+  {
+    id: "Qwen2.5-Coder-7B-Instruct-q4f16_1-MLC",
+    label: "Qwen 2.5 Coder 7B",
+    sizeMb: 4400,
+    description: "Strong open coding model. Best-in-class for browser-side dev help.",
+    minRamGb: 8,
+    category: "coding",
+  },
+  {
+    id: "DeepSeek-R1-Distill-Qwen-7B-q4f16_1-MLC",
+    label: "DeepSeek R1 Distill 7B",
+    sizeMb: 4400,
+    description: "Reasoning-tuned distill. Thinks step-by-step before answering.",
+    minRamGb: 8,
+    category: "reasoning",
   },
   {
     id: "Mistral-7B-Instruct-v0.3-q4f16_1-MLC",
@@ -60,6 +100,7 @@ export const WEBLLM_MODELS: WebLLMModel[] = [
     sizeMb: 4000,
     description: "Strong general-purpose model. Needs a capable GPU.",
     minRamGb: 6,
+    category: "general",
   },
   {
     id: "Llama-3.1-8B-Instruct-q4f32_1-MLC",
@@ -67,6 +108,7 @@ export const WEBLLM_MODELS: WebLLMModel[] = [
     sizeMb: 4700,
     description: "Meta's flagship 8B — excellent quality in the browser.",
     minRamGb: 6,
+    category: "general",
   },
 ];
 
@@ -89,6 +131,9 @@ export interface AddCustomModelInput {
   minRamGb: number;
   family: ModelFamily;
   description?: string;
+  vision?: boolean;
+  mmprojUrl?: string;
+  mmprojSizeMb?: number;
 }
 
 export interface ProbeResult {
@@ -189,10 +234,27 @@ export const webllmService = {
     onToken: (token: string) => void,
     onDone: (stats: { tokensPerSec: number; totalTimeMs: number; modelUsed: string; runtimeUsed: string }) => void,
     onError: (err: Error) => void,
-    abortController: AbortController
+    abortController: AbortController,
+    /**
+     * Optional image attachments for vision-capable models. The in-browser
+     * WebLLM runtime does not currently support image inputs, so this is
+     * accepted for API parity with the desktop build and ignored. If you
+     * try to chat with images against a web model, an error is surfaced so
+     * the user knows to switch to a cloud or desktop vision model.
+     */
+    images?: string[]
   ): Promise<void> {
     if (!engineCache || engineCache.modelId !== modelId) {
       onError(new Error("Model not loaded. Load the model first."));
+      return;
+    }
+
+    if (images && images.length > 0) {
+      onError(
+        new Error(
+          "Image input isn't supported by the in-browser models yet. Pick a cloud model (OpenAI/Anthropic) or use the desktop build for local vision."
+        )
+      );
       return;
     }
 
