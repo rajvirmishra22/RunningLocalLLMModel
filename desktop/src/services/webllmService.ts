@@ -381,6 +381,22 @@ export const webllmService = {
   },
 
   /**
+   * Like `listDownloaded`, but also returns each model's on-disk size in
+   * bytes. Used by the Models page to render per-model size and a total
+   * disk-usage figure. Bundled model isn't included — it ships in the
+   * installer's resources, not in `<app_local_data>/models/`.
+   */
+  async listDownloadedDetailed(): Promise<Array<{ modelId: string; sizeBytes: number }>> {
+    try {
+      const list = await invoke<RustDownloadedModel[]>("list_downloaded_models");
+      downloadedIds = new Set(list.map((m) => m.modelId));
+      return list.map((m) => ({ modelId: m.modelId, sizeBytes: m.sizeBytes }));
+    } catch {
+      return [];
+    }
+  },
+
+  /**
    * True iff this model is ready to load right now (bundled OR already on
    * disk).
    */

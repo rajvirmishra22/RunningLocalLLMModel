@@ -52,10 +52,28 @@ import { estimateMemory } from "@/services/optimizationEngine";
 /** Below this size we just start the download immediately. */
 const LARGE_DOWNLOAD_MB = 2 * 1024;
 
+/** Warn the user when free space on the models partition drops below this. */
+const LOW_DISK_THRESHOLD_BYTES = 10 * 1024 * 1024 * 1024;
+
 interface DiskFreeInfo {
   freeBytes: number;
   totalBytes: number;
   path: string;
+}
+
+interface DownloadedDetail {
+  modelId: string;
+  sizeBytes: number;
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes >= 1024 * 1024 * 1024) {
+    return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+  }
+  if (bytes >= 1024 * 1024) {
+    return `${(bytes / (1024 * 1024)).toFixed(0)} MB`;
+  }
+  return `${bytes} B`;
 }
 
 const EMPTY_PROFILE: Omit<ModelProfile, "id"> = {
@@ -93,10 +111,14 @@ export default function Models() {
   const [downloadedIds, setDownloadedIds] = useState<Set<string>>(
     () => new Set([BUNDLED_MODEL_ID]),
   );
+  const [downloadedSizes, setDownloadedSizes] = useState<Map<string, number>>(
+    () => new Map(),
+  );
   const [downloads, setDownloads] = useState<Record<string, DownloadState>>({});
   const [confirmModelId, setConfirmModelId] = useState<string | null>(null);
   const [diskInfo, setDiskInfo] = useState<DiskFreeInfo | null>(null);
   const [diskProbing, setDiskProbing] = useState(false);
+  const [headerDiskInfo, setHeaderDiskInfo] = useState<DiskFreeInfo | null>(null);
   const [skipWarningIds, setSkipWarningIds] = useState<Set<string>>(() => new Set());
   const webgpuAvailable = webllmService.checkWebGPU();
   const customSupported = isCustomCatalogSupported();
@@ -115,19 +137,57 @@ export default function Models() {
     setCustomModels(listCustomModels());
   };
 
+  const refreshHeaderDisk = useCallback(async () => {
+    try {
+      const info = await invoke<DiskFreeInfo>("disk_free");
+      setHeaderDiskInfo(info);
+    } catch {
+      /* Rust side not ready yet — keep the prior reading. */
+    }
+  }, []);
+
   const refreshDownloaded = useCallback(async () => {
     try {
-      const list = await webllmService.listDownloaded();
-      setDownloadedIds(new Set(list));
+      const list = await webllmService.listDownloadedDetailed();
+      // The bundled model is always available but lives in the installer's
+      // resources, not in <app_local_data>/models/, so it has no size here.
+      setDownloadedIds(new Set([BUNDLED_MODEL_ID, ...list.map((d: DownloadedDetail) => d.modelId)]));
+      setDownloadedSizes(new Map(list.map((d: DownloadedDetail) => [d.modelId, d.sizeBytes])));
     } catch {
       /* Rust side not ready yet — leave the current set in place. */
     }
-  }, []);
+    void refreshHeaderDisk();
+  }, [refreshHeaderDisk]);
 
   useEffect(() => {
     loadData();
     void refreshDownloaded();
   }, [refreshDownloaded]);
+
+  const totalDownloadedBytes = useMemo(() => {
+    let sum = 0;
+    for (const v of downloadedSizes.values()) sum += v;
+    return sum;
+  }, [downloadedSizes]);
+
+  /** Largest downloaded models first — used by the low-disk warning's
+   *  "free up space" shortcut so one click hits the biggest weight on disk. */
+  const downloadedBySize = useMemo(() => {
+    return Array.from(downloadedSizes.entries())
+      .map(([modelId, sizeBytes]) => ({ modelId, sizeBytes }))
+      .sort((a, b) => b.sizeBytes - a.sizeBytes);
+  }, [downloadedSizes]);
+
+  const lowDisk =
+    headerDiskInfo != null && headerDiskInfo.freeBytes < LOW_DISK_THRESHOLD_BYTES;
+
+  /** modelId → human label, for the low-disk warning's per-model rows. */
+  const labelByModelId = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const p of profiles) m.set(p.modelIdentifier, p.name);
+    for (const c of fullCatalog) if (!m.has(c.id)) m.set(c.id, c.label);
+    return m;
+  }, [profiles, fullCatalog]);
 
   const openAdd = () => {
     setEditingProfile(null);
@@ -312,6 +372,16 @@ export default function Models() {
           </div>
         )}
 
+        <DiskUsageHeader
+          totalDownloadedBytes={totalDownloadedBytes}
+          downloadedCount={downloadedSizes.size}
+          diskInfo={headerDiskInfo}
+          lowDisk={lowDisk}
+          largestDownloaded={downloadedBySize}
+          onDeleteWeights={(id) => void handleDeleteWeights(id)}
+          labelByModelId={labelByModelId}
+        />
+
         {/* Your Profiles */}
         <section>
           <div className="flex items-center gap-2 mb-3">
@@ -336,6 +406,7 @@ export default function Models() {
                     catalogEntry={catalogEntry}
                     isBundled={isBundled}
                     isDownloaded={isDownloaded}
+                    onDiskBytes={downloadedSizes.get(profile.modelIdentifier) ?? null}
                     downloadState={downloads[profile.modelIdentifier] ?? { kind: "idle" }}
                     onEdit={openEdit}
                     onDeleteProfile={handleDeleteProfile}
@@ -551,6 +622,10 @@ interface ProfileCardProps {
   catalogEntry: WebLLMModel | undefined;
   isBundled: boolean;
   isDownloaded: boolean;
+  /** Actual on-disk size of the downloaded weights, in bytes. Null for the
+   *  bundled model (it lives in the installer's resources, not the data dir)
+   *  or for models we haven't gotten a reading on yet. */
+  onDiskBytes: number | null;
   downloadState: DownloadState;
   onEdit: (p: ModelProfile) => void;
   onDeleteProfile: (id: string) => void;
@@ -564,6 +639,7 @@ function ProfileCard({
   catalogEntry,
   isBundled,
   isDownloaded,
+  onDiskBytes,
   downloadState,
   onEdit,
   onDeleteProfile,
@@ -650,6 +726,15 @@ function ProfileCard({
               </div>
             ) : isDownloaded ? (
               <div className="flex items-center justify-end gap-2">
+                {onDiskBytes != null && onDiskBytes > 0 && (
+                  <span
+                    className="text-[10px] font-mono text-muted-foreground"
+                    data-testid={`on-disk-size-${profile.id}`}
+                    title="Actual size of the downloaded weights on disk"
+                  >
+                    {formatBytes(onDiskBytes)} on disk
+                  </span>
+                )}
                 <Button
                   size="sm"
                   variant="ghost"
@@ -1031,6 +1116,123 @@ function AddCustomModelDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Disk-usage header
+//
+// Surfaces total bytes consumed by every downloaded GGUF in the app's data
+// dir plus free space on that partition, and pops a warning banner when
+// free space drops below LOW_DISK_THRESHOLD_BYTES. The banner lists the
+// largest weights with a one-click delete so the user can recover space
+// without leaving the page.
+// ---------------------------------------------------------------------------
+
+interface DiskUsageHeaderProps {
+  totalDownloadedBytes: number;
+  downloadedCount: number;
+  diskInfo: DiskFreeInfo | null;
+  lowDisk: boolean;
+  largestDownloaded: Array<{ modelId: string; sizeBytes: number }>;
+  onDeleteWeights: (modelId: string) => void;
+  labelByModelId: Map<string, string>;
+}
+
+function DiskUsageHeader({
+  totalDownloadedBytes,
+  downloadedCount,
+  diskInfo,
+  lowDisk,
+  largestDownloaded,
+  onDeleteWeights,
+  labelByModelId,
+}: DiskUsageHeaderProps) {
+  // Nothing useful to show — no downloads yet and the disk probe hasn't
+  // returned anything either. Stay quiet so the page header isn't cluttered.
+  if (downloadedCount === 0 && diskInfo == null) return null;
+
+  return (
+    <section className="space-y-2" data-testid="disk-usage-header">
+      <div className="flex items-center justify-between gap-3 p-3 rounded-md border border-border bg-muted/30">
+        <div className="flex items-center gap-2 min-w-0">
+          <HardDrive className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+          <div className="min-w-0">
+            <p className="text-xs font-medium">
+              <span data-testid="disk-used-label">
+                {formatBytes(totalDownloadedBytes)} used
+              </span>{" "}
+              <span className="text-muted-foreground font-normal">
+                across {downloadedCount} downloaded{" "}
+                {downloadedCount === 1 ? "model" : "models"}
+              </span>
+            </p>
+            <p className="text-[10px] text-muted-foreground mt-0.5">
+              {diskInfo != null ? (
+                <>
+                  <span data-testid="disk-free-label">
+                    {formatBytes(diskInfo.freeBytes)} free
+                  </span>{" "}
+                  of {formatBytes(diskInfo.totalBytes)} on this drive
+                </>
+              ) : (
+                "Checking free disk space…"
+              )}
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {lowDisk && diskInfo != null && (
+        <div
+          className="p-3 rounded-md border border-yellow-500/30 bg-yellow-500/10 space-y-2"
+          data-testid="low-disk-banner"
+        >
+          <div className="flex items-start gap-2">
+            <AlertCircle className="w-4 h-4 text-yellow-500 flex-shrink-0 mt-0.5" />
+            <div className="min-w-0 flex-1">
+              <p className="text-xs font-medium text-yellow-500">
+                Only {formatBytes(diskInfo.freeBytes)} free on this drive
+              </p>
+              <p className="text-[11px] text-yellow-500/80 mt-0.5">
+                Downloading another multi-GB model could fill your disk.
+                Delete weights you aren't using to free up space.
+              </p>
+            </div>
+          </div>
+          {largestDownloaded.length > 0 && (
+            <div className="space-y-1 pt-1">
+              {largestDownloaded.slice(0, 3).map(({ modelId, sizeBytes }) => (
+                <div
+                  key={modelId}
+                  className="flex items-center justify-between gap-2 px-2 py-1.5 rounded bg-background/40 border border-yellow-500/20"
+                >
+                  <div className="min-w-0 flex-1">
+                    <p className="text-[11px] font-medium truncate">
+                      {labelByModelId.get(modelId) ?? modelId}
+                    </p>
+                    <p className="text-[10px] font-mono text-muted-foreground">
+                      {formatBytes(sizeBytes)}
+                    </p>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-6 text-[10px] px-2 gap-1 flex-shrink-0"
+                    onClick={() => onDeleteWeights(modelId)}
+                    data-testid={`btn-low-disk-delete-${modelId}`}
+                    title="Delete this model's weights to free disk space"
+                  >
+                    <Trash2 className="w-3 h-3" />
+                    Delete
+                  </Button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </section>
   );
 }
 
