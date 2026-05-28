@@ -107,6 +107,43 @@ export const WEBLLM_MODELS: WebLLMModel[] = [
 export interface InitProgress {
   text: string;
   progress: number; // 0-1
+  /** Bytes downloaded so far (downloads only). */
+  downloadedBytes?: number;
+  /** Total expected bytes, when the server reports Content-Length. */
+  totalBytes?: number;
+  /** Smoothed instantaneous throughput in bytes/sec (downloads only). */
+  bytesPerSec?: number;
+  /** Estimated seconds to finish at the current throughput. */
+  etaSec?: number;
+}
+
+const LAST_DOWNLOAD_SPEED_KEY = "lms.last_download_speed.v1";
+
+/**
+ * Last smoothed download throughput (bytes/sec) we observed from a real
+ * stream, persisted across reloads so the confirm-download dialog can show
+ * an ETA before the next download starts. `null` if we've never measured.
+ */
+export function getLastDownloadBytesPerSec(): number | null {
+  if (typeof localStorage === "undefined") return null;
+  try {
+    const raw = localStorage.getItem(LAST_DOWNLOAD_SPEED_KEY);
+    if (!raw) return null;
+    const n = Number(raw);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  } catch {
+    return null;
+  }
+}
+
+function rememberDownloadBytesPerSec(bytesPerSec: number): void {
+  if (typeof localStorage === "undefined") return;
+  if (!Number.isFinite(bytesPerSec) || bytesPerSec <= 0) return;
+  try {
+    localStorage.setItem(LAST_DOWNLOAD_SPEED_KEY, String(Math.round(bytesPerSec)));
+  } catch {
+    /* quota / disabled — ignore */
+  }
 }
 
 export interface DownloadProgressEvent {
@@ -425,12 +462,43 @@ export const webllmService = {
 
     onProgress({ text: "Connecting to Hugging Face…", progress: 0 });
 
+    // Rolling throughput estimate. We compute bytes/sec from the delta
+    // between successive Rust progress events (emitted ~10x/sec) and smooth
+    // it with an EMA so a single slow chunk doesn't make the ETA jitter.
+    let lastTs: number | null = null;
+    let lastBytes = 0;
+    let smoothedBps = 0;
+    const ALPHA = 0.25; // EMA weight on the new sample
+
     const unlisten = await listen<DownloadProgressEvent>(
       "download-progress",
       (event) => {
         if (event.payload.modelId !== modelId) return;
         const { downloadedBytes, totalBytes } = event.payload;
         const pct = totalBytes > 0 ? downloadedBytes / totalBytes : 0;
+
+        const now = performance.now();
+        if (lastTs != null) {
+          const dt = (now - lastTs) / 1000;
+          const db = downloadedBytes - lastBytes;
+          // Guard against zero / negative deltas (clock skew, dup events).
+          if (dt > 0.05 && db > 0) {
+            const instantBps = db / dt;
+            smoothedBps = smoothedBps === 0
+              ? instantBps
+              : smoothedBps * (1 - ALPHA) + instantBps * ALPHA;
+          }
+        }
+        lastTs = now;
+        lastBytes = downloadedBytes;
+
+        const remaining = totalBytes > 0
+          ? Math.max(0, totalBytes - downloadedBytes)
+          : 0;
+        const etaSec = smoothedBps > 0 && remaining > 0
+          ? remaining / smoothedBps
+          : undefined;
+
         const mb = (downloadedBytes / (1024 * 1024)).toFixed(0);
         const totalMb = (totalBytes / (1024 * 1024)).toFixed(0);
         onProgress({
@@ -438,7 +506,15 @@ export const webllmService = {
             ? `Downloading… ${mb} / ${totalMb} MB`
             : `Downloading… ${mb} MB`,
           progress: pct,
+          downloadedBytes,
+          totalBytes,
+          bytesPerSec: smoothedBps > 0 ? smoothedBps : undefined,
+          etaSec,
         });
+
+        // Persist the latest reading so the next session's confirm dialog
+        // can show an ETA before bytes start flowing again.
+        if (smoothedBps > 0) rememberDownloadBytesPerSec(smoothedBps);
       },
     );
 

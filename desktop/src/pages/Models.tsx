@@ -45,6 +45,7 @@ import {
   removeCustomModel,
   probeModelUrl,
   detectFamily,
+  getLastDownloadBytesPerSec,
 } from "@/services/webllmService";
 import { getSystemInfo } from "@/services/systemInfo";
 import { estimateMemory } from "@/services/optimizationEngine";
@@ -98,8 +99,35 @@ const BUNDLED_MODEL_ID = "Llama-3.2-1B-Instruct-q4f32_1-MLC";
 
 type DownloadState =
   | { kind: "idle" }
-  | { kind: "downloading"; progress: number; text: string }
+  | {
+      kind: "downloading";
+      progress: number;
+      text: string;
+      bytesPerSec?: number;
+      etaSec?: number;
+    }
   | { kind: "error"; message: string };
+
+/** "1.4 min" / "23 sec" / "1 h 12 min" — compact, plain English. */
+function formatEta(sec: number): string {
+  if (!Number.isFinite(sec) || sec <= 0) return "—";
+  if (sec < 60) return `${Math.max(1, Math.round(sec))} sec`;
+  if (sec < 3600) {
+    const mins = Math.round(sec / 60);
+    return `${mins} min`;
+  }
+  const h = Math.floor(sec / 3600);
+  const m = Math.round((sec % 3600) / 60);
+  return m > 0 ? `${h} h ${m} min` : `${h} h`;
+}
+
+/** "12.4 MB/s" / "640 KB/s". */
+function formatBps(bps: number): string {
+  if (!Number.isFinite(bps) || bps <= 0) return "—";
+  if (bps >= 1024 * 1024) return `${(bps / (1024 * 1024)).toFixed(1)} MB/s`;
+  if (bps >= 1024) return `${(bps / 1024).toFixed(0)} KB/s`;
+  return `${Math.round(bps)} B/s`;
+}
 
 export default function Models() {
   const [profiles, setProfiles] = useState<ModelProfile[]>([]);
@@ -267,6 +295,8 @@ export default function Models() {
             kind: "downloading",
             progress: p.progress,
             text: p.text,
+            bytesPerSec: p.bytesPerSec,
+            etaSec: p.etaSec,
           },
         }));
       });
@@ -705,6 +735,8 @@ function ProfileCard({
               <DownloadProgressBar
                 progress={downloadState.progress}
                 text={downloadState.text}
+                bytesPerSec={downloadState.bytesPerSec}
+                etaSec={downloadState.etaSec}
                 onCancel={() => onCancelDownload(profile.modelIdentifier)}
                 testId={`download-progress-${profile.id}`}
               />
@@ -813,15 +845,21 @@ function StatusBadge({
 function DownloadProgressBar({
   progress,
   text,
+  bytesPerSec,
+  etaSec,
   onCancel,
   testId,
 }: {
   progress: number;
   text: string;
+  bytesPerSec?: number;
+  etaSec?: number;
   onCancel: () => void;
   testId: string;
 }) {
   const pct = Math.max(0, Math.min(100, Math.round(progress * 100)));
+  const hasRate = bytesPerSec != null && bytesPerSec > 0;
+  const hasEta = etaSec != null && etaSec > 0 && Number.isFinite(etaSec);
   return (
     <div className="space-y-1.5" data-testid={testId}>
       <div className="flex items-center justify-between gap-2">
@@ -844,6 +882,16 @@ function DownloadProgressBar({
           style={{ width: `${pct}%` }}
         />
       </div>
+      {(hasRate || hasEta) && (
+        <div className="flex items-center justify-between gap-2 text-[10px] font-mono text-muted-foreground tabular-nums">
+          <span data-testid={`${testId}-rate`}>
+            {hasRate ? formatBps(bytesPerSec!) : ""}
+          </span>
+          <span data-testid={`${testId}-eta`}>
+            {hasEta ? `~${formatEta(etaSec!)} left` : ""}
+          </span>
+        </div>
+      )}
     </div>
   );
 }
@@ -1319,6 +1367,11 @@ function ConfirmDownloadDialog({
   const diskShortfall =
     diskInfo != null && diskInfo.freeBytes < sizeBytes * 1.1;
 
+  // Estimated time based on the last real download's smoothed throughput.
+  // No separate probe — we just reuse what the previous stream observed.
+  const lastBps = getLastDownloadBytesPerSec();
+  const etaSec = lastBps != null && lastBps > 0 ? sizeBytes / lastBps : null;
+
   return (
     <Dialog
       open={true}
@@ -1357,6 +1410,15 @@ function ConfirmDownloadDialog({
               }
               warning={diskShortfall}
               testId="confirm-disk-free"
+            />
+            <Row
+              label="Estimated time"
+              value={
+                etaSec != null && lastBps != null
+                  ? `~${formatEta(etaSec)} at ~${formatBps(lastBps)}`
+                  : "First download — speed unknown yet"
+              }
+              testId="confirm-eta"
             />
             <Row
               label="Estimated RAM use"
