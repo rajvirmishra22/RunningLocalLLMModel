@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
   Plus,
@@ -106,6 +106,7 @@ type DownloadState =
       bytesPerSec?: number;
       etaSec?: number;
     }
+  | { kind: "queued" }
   | { kind: "error"; message: string };
 
 /** "1.4 min" / "23 sec" / "1 h 12 min" — compact, plain English. */
@@ -143,6 +144,24 @@ export default function Models() {
     () => new Map(),
   );
   const [downloads, setDownloads] = useState<Record<string, DownloadState>>({});
+  // `queueRef` is the single source of truth for queue ordering — every
+  // mutation goes through `mutateQueue`, which updates the ref synchronously
+  // and then mirrors it into React state for rendering. Reading from the ref
+  // avoids the stale-`queue` race the previous `useEffect` sync had between
+  // a `setQueue` call and the next render.
+  const [queue, setQueue] = useState<string[]>([]);
+  const queueRef = useRef<string[]>([]);
+  const activeIdRef = useRef<string | null>(null);
+  const mutateQueue = useCallback(
+    (updater: (current: string[]) => string[]): string[] => {
+      const next = updater(queueRef.current);
+      if (next === queueRef.current) return next;
+      queueRef.current = next;
+      setQueue(next);
+      return next;
+    },
+    [],
+  );
   const [confirmModelId, setConfirmModelId] = useState<string | null>(null);
   const [diskInfo, setDiskInfo] = useState<DiskFreeInfo | null>(null);
   const [diskProbing, setDiskProbing] = useState(false);
@@ -217,6 +236,35 @@ export default function Models() {
     return m;
   }, [profiles, fullCatalog]);
 
+  /** The model whose download is actively transferring bytes right now. */
+  const activeDownloadId = useMemo(() => {
+    return (
+      Object.entries(downloads).find(
+        ([, s]) => s.kind === "downloading",
+      )?.[0] ?? null
+    );
+  }, [downloads]);
+
+  /**
+   * "starts after Mistral 7B" / "starts after Llama 3.2 3B" — the predecessor
+   * is whichever download will finish immediately before this one's turn
+   * (the active download for queue[0], or queue[i-1] otherwise).
+   */
+  const getQueueDescription = useCallback(
+    (modelId: string): string | null => {
+      const idx = queue.indexOf(modelId);
+      if (idx === -1) return null;
+      const predecessorId = idx === 0 ? activeDownloadId : queue[idx - 1];
+      const predLabel = predecessorId
+        ? labelByModelId.get(predecessorId) ?? predecessorId
+        : null;
+      return predLabel
+        ? `Queued — starts after ${predLabel}`
+        : "Queued";
+    },
+    [queue, activeDownloadId, labelByModelId],
+  );
+
   const openAdd = () => {
     setEditingProfile(null);
     setForm({ ...EMPTY_PROFILE });
@@ -282,48 +330,81 @@ export default function Models() {
     loadData();
   };
 
-  const startDownload = async (modelId: string) => {
-    setDownloads((s) => ({
-      ...s,
-      [modelId]: { kind: "downloading", progress: 0, text: "Starting…" },
-    }));
-    try {
-      await webllmService.downloadModel(modelId, (p: InitProgress) => {
-        setDownloads((s) => ({
-          ...s,
-          [modelId]: {
-            kind: "downloading",
-            progress: p.progress,
-            text: p.text,
-            bytesPerSec: p.bytesPerSec,
-            etaSec: p.etaSec,
-          },
-        }));
-      });
-      await refreshDownloaded();
-      setDownloads((s) => {
-        const next = { ...s };
-        delete next[modelId];
-        return next;
-      });
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      // A user-cancelled download surfaces as a generic error string from the
-      // Rust side. Treat it as a quiet reset rather than a loud failure.
-      if (/cancel/i.test(msg)) {
+  const runDownload = useCallback(
+    async (modelId: string): Promise<void> => {
+      activeIdRef.current = modelId;
+      setDownloads((s) => ({
+        ...s,
+        [modelId]: { kind: "downloading", progress: 0, text: "Starting…" },
+      }));
+      try {
+        await webllmService.downloadModel(modelId, (p: InitProgress) => {
+          setDownloads((s) => ({
+            ...s,
+            [modelId]: {
+              kind: "downloading",
+              progress: p.progress,
+              text: p.text,
+              bytesPerSec: p.bytesPerSec,
+              etaSec: p.etaSec,
+            },
+          }));
+        });
+        await refreshDownloaded();
         setDownloads((s) => {
           const next = { ...s };
           delete next[modelId];
           return next;
         });
-      } else {
-        setDownloads((s) => ({
-          ...s,
-          [modelId]: { kind: "error", message: msg },
-        }));
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        // A user-cancelled download surfaces as a generic error string from
+        // the Rust side. Treat it as a quiet reset rather than a loud failure.
+        if (/cancel/i.test(msg)) {
+          setDownloads((s) => {
+            const next = { ...s };
+            delete next[modelId];
+            return next;
+          });
+        } else {
+          setDownloads((s) => ({
+            ...s,
+            [modelId]: { kind: "error", message: msg },
+          }));
+        }
+      } finally {
+        activeIdRef.current = null;
+        // Pop the next queued model (if any) and start it. The ref is kept
+        // in sync at every mutation, so this is the authoritative view of
+        // what's still pending even if React hasn't re-rendered yet.
+        let nextId: string | undefined;
+        mutateQueue((q) => {
+          if (q.length === 0) return q;
+          nextId = q[0];
+          return q.slice(1);
+        });
+        if (nextId != null) {
+          void runDownload(nextId);
+        }
       }
-    }
-  };
+    },
+    [refreshDownloaded, mutateQueue],
+  );
+
+  const enqueueDownload = useCallback(
+    (modelId: string) => {
+      // Idempotent: ignore if it's already running or already queued.
+      if (activeIdRef.current === modelId) return;
+      if (queueRef.current.includes(modelId)) return;
+      if (activeIdRef.current == null) {
+        void runDownload(modelId);
+        return;
+      }
+      mutateQueue((q) => [...q, modelId]);
+      setDownloads((s) => ({ ...s, [modelId]: { kind: "queued" } }));
+    },
+    [runDownload, mutateQueue],
+  );
 
   const handleDownload = async (modelId: string) => {
     const model = fullCatalog.find((m) => m.id === modelId);
@@ -342,7 +423,7 @@ export default function Models() {
       }
       return;
     }
-    await startDownload(modelId);
+    enqueueDownload(modelId);
   };
 
   const handleConfirmDownload = async (dontAskAgain: boolean) => {
@@ -357,10 +438,26 @@ export default function Models() {
     }
     setConfirmModelId(null);
     setDiskInfo(null);
-    await startDownload(id);
+    enqueueDownload(id);
   };
 
   const handleCancelDownload = async (modelId: string) => {
+    // If the model is sitting in the queue (not yet started), just drop it
+    // — no need to round-trip to Rust since nothing is downloading.
+    let wasQueued = false;
+    mutateQueue((q) => {
+      if (!q.includes(modelId)) return q;
+      wasQueued = true;
+      return q.filter((id) => id !== modelId);
+    });
+    if (wasQueued) {
+      setDownloads((s) => {
+        const next = { ...s };
+        delete next[modelId];
+        return next;
+      });
+      return;
+    }
     await webllmService.cancelDownload(modelId);
   };
 
@@ -412,6 +509,13 @@ export default function Models() {
           labelByModelId={labelByModelId}
         />
 
+        <DownloadQueuePanel
+          queue={queue}
+          activeDownloadId={activeDownloadId}
+          labelByModelId={labelByModelId}
+          onCancel={(id) => void handleCancelDownload(id)}
+        />
+
         {/* Your Profiles */}
         <section>
           <div className="flex items-center gap-2 mb-3">
@@ -438,6 +542,7 @@ export default function Models() {
                     isDownloaded={isDownloaded}
                     onDiskBytes={downloadedSizes.get(profile.modelIdentifier) ?? null}
                     downloadState={downloads[profile.modelIdentifier] ?? { kind: "idle" }}
+                    queueDescription={getQueueDescription(profile.modelIdentifier)}
                     onEdit={openEdit}
                     onDeleteProfile={handleDeleteProfile}
                     onDownload={handleDownload}
@@ -727,6 +832,9 @@ interface ProfileCardProps {
    *  or for models we haven't gotten a reading on yet. */
   onDiskBytes: number | null;
   downloadState: DownloadState;
+  /** Human description like "Queued — starts after Mistral 7B", or null if
+   *  this model isn't waiting in the download queue. */
+  queueDescription: string | null;
   onEdit: (p: ModelProfile) => void;
   onDeleteProfile: (id: string) => void;
   onDownload: (modelId: string) => void;
@@ -741,6 +849,7 @@ function ProfileCard({
   isDownloaded,
   onDiskBytes,
   downloadState,
+  queueDescription,
   onEdit,
   onDeleteProfile,
   onDownload,
@@ -768,6 +877,7 @@ function ProfileCard({
                 isDownloaded={isDownloaded}
                 downloadable={downloadable}
                 downloadState={downloadState}
+                queueDescription={queueDescription}
               />
             </div>
             <p className="text-xs font-mono text-muted-foreground mt-1 truncate">{profile.modelIdentifier}</p>
@@ -801,7 +911,27 @@ function ProfileCard({
         {/* Download / delete-weights row */}
         {downloadable && (
           <div className="pt-1">
-            {downloadState.kind === "downloading" ? (
+            {downloadState.kind === "queued" ? (
+              <div
+                className="flex items-center justify-between gap-2 p-2 rounded-md bg-muted/40 border border-border"
+                data-testid={`queued-row-${profile.id}`}
+              >
+                <p className="text-[11px] text-muted-foreground truncate">
+                  {queueDescription ?? "Queued"}
+                </p>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-6 text-[10px] px-2 gap-1 flex-shrink-0"
+                  onClick={() => onCancelDownload(profile.modelIdentifier)}
+                  data-testid={`btn-cancel-queued-${profile.id}`}
+                  title="Remove from download queue"
+                >
+                  <X className="w-3 h-3" />
+                  Remove
+                </Button>
+              </div>
+            ) : downloadState.kind === "downloading" ? (
               <DownloadProgressBar
                 progress={downloadState.progress}
                 text={downloadState.text}
@@ -874,11 +1004,13 @@ function StatusBadge({
   isDownloaded,
   downloadable,
   downloadState,
+  queueDescription,
 }: {
   isBundled: boolean;
   isDownloaded: boolean;
   downloadable: boolean;
   downloadState: DownloadState;
+  queueDescription: string | null;
 }) {
   if (isBundled) {
     return (
@@ -891,6 +1023,16 @@ function StatusBadge({
     return (
       <span className="text-[10px] px-1.5 py-0.5 rounded border bg-primary/10 text-primary border-primary/20 font-medium">
         Downloading
+      </span>
+    );
+  }
+  if (downloadState.kind === "queued") {
+    return (
+      <span
+        className="text-[10px] px-1.5 py-0.5 rounded border bg-muted/40 text-muted-foreground border-border font-medium"
+        title={queueDescription ?? "Queued"}
+      >
+        Queued
       </span>
     );
   }
@@ -1350,6 +1492,90 @@ function DiskUsageHeader({
           )}
         </div>
       )}
+    </section>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Download queue panel
+//
+// Shows the FIFO list of models waiting their turn behind the active
+// download. Each row has a Remove button that drops the model from the
+// queue without touching whatever is currently transferring.
+// ---------------------------------------------------------------------------
+
+interface DownloadQueuePanelProps {
+  queue: string[];
+  activeDownloadId: string | null;
+  labelByModelId: Map<string, string>;
+  onCancel: (modelId: string) => void;
+}
+
+function DownloadQueuePanel({
+  queue,
+  activeDownloadId,
+  labelByModelId,
+  onCancel,
+}: DownloadQueuePanelProps) {
+  if (queue.length === 0) return null;
+  return (
+    <section
+      className="p-3 rounded-md border border-border bg-muted/30 space-y-2"
+      data-testid="download-queue-panel"
+    >
+      <div className="flex items-center justify-between">
+        <p className="text-xs font-medium">
+          Download queue{" "}
+          <span className="text-muted-foreground font-normal">
+            ({queue.length} waiting)
+          </span>
+        </p>
+        {activeDownloadId && (
+          <p className="text-[10px] text-muted-foreground truncate ml-2">
+            Now downloading: {labelByModelId.get(activeDownloadId) ?? activeDownloadId}
+          </p>
+        )}
+      </div>
+      <div className="space-y-1">
+        {queue.map((modelId, i) => {
+          const predecessorId = i === 0 ? activeDownloadId : queue[i - 1];
+          const predLabel = predecessorId
+            ? labelByModelId.get(predecessorId) ?? predecessorId
+            : null;
+          return (
+            <div
+              key={modelId}
+              className="flex items-center justify-between gap-2 px-2 py-1.5 rounded bg-background/40 border border-border"
+              data-testid={`queue-item-${modelId}`}
+            >
+              <div className="min-w-0 flex-1 flex items-center gap-2">
+                <span className="text-[10px] font-mono text-muted-foreground tabular-nums w-5 text-right">
+                  {i + 1}.
+                </span>
+                <div className="min-w-0">
+                  <p className="text-[11px] font-medium truncate">
+                    {labelByModelId.get(modelId) ?? modelId}
+                  </p>
+                  <p className="text-[10px] text-muted-foreground truncate">
+                    {predLabel ? `starts after ${predLabel}` : "ready to start"}
+                  </p>
+                </div>
+              </div>
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-6 text-[10px] px-2 gap-1 flex-shrink-0"
+                onClick={() => onCancel(modelId)}
+                data-testid={`btn-queue-cancel-${modelId}`}
+                title="Remove this model from the download queue"
+              >
+                <X className="w-3 h-3" />
+                Cancel
+              </Button>
+            </div>
+          );
+        })}
+      </div>
     </section>
   );
 }
