@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useCallback } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import {
   Plus,
   Trash2,
@@ -15,6 +16,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -45,6 +47,16 @@ import {
   detectFamily,
 } from "@/services/webllmService";
 import { getSystemInfo } from "@/services/systemInfo";
+import { estimateMemory } from "@/services/optimizationEngine";
+
+/** Below this size we just start the download immediately. */
+const LARGE_DOWNLOAD_MB = 2 * 1024;
+
+interface DiskFreeInfo {
+  freeBytes: number;
+  totalBytes: number;
+  path: string;
+}
 
 const EMPTY_PROFILE: Omit<ModelProfile, "id"> = {
   name: "",
@@ -82,6 +94,10 @@ export default function Models() {
     () => new Set([BUNDLED_MODEL_ID]),
   );
   const [downloads, setDownloads] = useState<Record<string, DownloadState>>({});
+  const [confirmModelId, setConfirmModelId] = useState<string | null>(null);
+  const [diskInfo, setDiskInfo] = useState<DiskFreeInfo | null>(null);
+  const [diskProbing, setDiskProbing] = useState(false);
+  const [skipWarningIds, setSkipWarningIds] = useState<Set<string>>(() => new Set());
   const webgpuAvailable = webllmService.checkWebGPU();
   const customSupported = isCustomCatalogSupported();
   const systemRamGb = useMemo(() => getSystemInfo().ram, []);
@@ -178,7 +194,7 @@ export default function Models() {
     loadData();
   };
 
-  const handleDownload = async (modelId: string) => {
+  const startDownload = async (modelId: string) => {
     setDownloads((s) => ({
       ...s,
       [modelId]: { kind: "downloading", progress: 0, text: "Starting…" },
@@ -217,6 +233,41 @@ export default function Models() {
         }));
       }
     }
+  };
+
+  const handleDownload = async (modelId: string) => {
+    const model = fullCatalog.find((m) => m.id === modelId);
+    const isLarge = model != null && model.sizeMb >= LARGE_DOWNLOAD_MB;
+    if (isLarge && !skipWarningIds.has(modelId)) {
+      setConfirmModelId(modelId);
+      setDiskInfo(null);
+      setDiskProbing(true);
+      try {
+        const info = await invoke<DiskFreeInfo>("disk_free");
+        setDiskInfo(info);
+      } catch {
+        /* Disk probe failed — dialog will still render without it. */
+      } finally {
+        setDiskProbing(false);
+      }
+      return;
+    }
+    await startDownload(modelId);
+  };
+
+  const handleConfirmDownload = async (dontAskAgain: boolean) => {
+    const id = confirmModelId;
+    if (!id) return;
+    if (dontAskAgain) {
+      setSkipWarningIds((s) => {
+        const next = new Set(s);
+        next.add(id);
+        return next;
+      });
+    }
+    setConfirmModelId(null);
+    setDiskInfo(null);
+    await startDownload(id);
   };
 
   const handleCancelDownload = async (modelId: string) => {
@@ -385,6 +436,22 @@ export default function Models() {
           </div>
         </section>
       </div>
+
+      <ConfirmDownloadDialog
+        model={
+          confirmModelId
+            ? fullCatalog.find((m) => m.id === confirmModelId) ?? null
+            : null
+        }
+        diskInfo={diskInfo}
+        diskProbing={diskProbing}
+        systemRamGb={systemRamGb}
+        onCancel={() => {
+          setConfirmModelId(null);
+          setDiskInfo(null);
+        }}
+        onConfirm={(dontAskAgain) => void handleConfirmDownload(dontAskAgain)}
+      />
 
       <AddCustomModelDialog
         open={customDialogOpen}
@@ -971,6 +1038,229 @@ function EmptyState({ message }: { message: string }) {
   return (
     <div className="flex items-center justify-center py-8 rounded-lg border border-dashed border-border">
       <p className="text-xs text-muted-foreground">{message}</p>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Confirm-download dialog
+//
+// Gates any catalog model >= 2 GB behind an explicit confirmation showing
+// download size, free disk space on the models partition, estimated RAM
+// usage and a green/yellow/red fit indicator. Optional "don't ask again
+// this session" checkbox skips the dialog for the same model id until the
+// app is reloaded.
+// ---------------------------------------------------------------------------
+
+interface ConfirmDownloadDialogProps {
+  model: WebLLMModel | null;
+  diskInfo: DiskFreeInfo | null;
+  diskProbing: boolean;
+  systemRamGb: number | null;
+  onCancel: () => void;
+  onConfirm: (dontAskAgain: boolean) => void;
+}
+
+type FitLevel = "good" | "tight" | "bad" | "unknown";
+
+function classifyFit(
+  totalGb: number,
+  ramGb: number | null,
+): { level: FitLevel; label: string } {
+  if (ramGb == null) {
+    return { level: "unknown", label: "RAM unknown" };
+  }
+  if (totalGb <= ramGb * 0.7) return { level: "good", label: "Comfortable fit" };
+  if (totalGb <= ramGb) return { level: "tight", label: "Tight — may swap" };
+  return { level: "bad", label: "Likely won't fit" };
+}
+
+function fitColors(level: FitLevel): string {
+  switch (level) {
+    case "good":
+      return "bg-green-500/10 text-green-500 border-green-500/20";
+    case "tight":
+      return "bg-yellow-500/10 text-yellow-500 border-yellow-500/20";
+    case "bad":
+      return "bg-red-500/10 text-red-500 border-red-500/20";
+    case "unknown":
+      return "bg-muted/40 text-muted-foreground border-border";
+  }
+}
+
+function formatGb(bytes: number): string {
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+}
+
+function ConfirmDownloadDialog({
+  model,
+  diskInfo,
+  diskProbing,
+  systemRamGb,
+  onCancel,
+  onConfirm,
+}: ConfirmDownloadDialogProps) {
+  const [dontAskAgain, setDontAskAgain] = useState(false);
+
+  // Reset the checkbox whenever a new model is queued.
+  useEffect(() => {
+    if (model) setDontAskAgain(false);
+  }, [model?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  if (!model) return null;
+
+  const sizeBytes = model.sizeMb * 1024 * 1024;
+  const sizeGb = model.sizeMb / 1024;
+  const memory = estimateMemory(model, 4096, systemRamGb);
+  const fit = classifyFit(memory.totalGb, systemRamGb);
+  // Need the model plus a safety margin for the .partial during download.
+  const diskShortfall =
+    diskInfo != null && diskInfo.freeBytes < sizeBytes * 1.1;
+
+  return (
+    <Dialog
+      open={true}
+      onOpenChange={(open) => {
+        if (!open) onCancel();
+      }}
+    >
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle className="text-sm font-semibold flex items-center gap-2">
+            <Download className="w-4 h-4" />
+            Download {model.label}?
+          </DialogTitle>
+        </DialogHeader>
+
+        <div className="space-y-3 py-1">
+          <p className="text-xs text-muted-foreground">
+            This is a {sizeGb.toFixed(1)} GB download. Once it starts it will
+            keep running in the background — you can cancel anytime.
+          </p>
+
+          <div className="rounded-md border border-border p-3 space-y-2.5 bg-muted/30">
+            <Row
+              label="Download size"
+              value={`${sizeGb.toFixed(2)} GB`}
+              testId="confirm-download-size"
+            />
+            <Row
+              label="Free disk space"
+              value={
+                diskProbing
+                  ? "Checking…"
+                  : diskInfo
+                    ? `${formatGb(diskInfo.freeBytes)} of ${formatGb(diskInfo.totalBytes)}`
+                    : "unknown"
+              }
+              warning={diskShortfall}
+              testId="confirm-disk-free"
+            />
+            <Row
+              label="Estimated RAM use"
+              value={`~${memory.totalGb.toFixed(1)} GB${
+                systemRamGb != null ? ` of ${systemRamGb} GB` : ""
+              }`}
+              testId="confirm-ram-use"
+            />
+            <div className="flex items-center justify-between text-[11px] pt-1">
+              <span className="text-muted-foreground">Fit</span>
+              <span
+                className={`text-[10px] px-1.5 py-0.5 rounded border font-medium ${fitColors(fit.level)}`}
+                data-testid="confirm-fit-indicator"
+                data-fit={fit.level}
+              >
+                {fit.label}
+              </span>
+            </div>
+          </div>
+
+          {diskShortfall && (
+            <div className="flex items-start gap-2 text-[10px] text-red-500 bg-red-500/10 border border-red-500/20 rounded p-2">
+              <AlertCircle className="w-3 h-3 mt-0.5 flex-shrink-0" />
+              <span>
+                You don't have enough free disk space for this download.
+                Free up at least {sizeGb.toFixed(1)} GB and try again.
+              </span>
+            </div>
+          )}
+
+          {!diskShortfall && fit.level === "bad" && (
+            <div className="flex items-start gap-2 text-[10px] text-red-500 bg-red-500/10 border border-red-500/20 rounded p-2">
+              <AlertCircle className="w-3 h-3 mt-0.5 flex-shrink-0" />
+              <span>
+                Estimated memory use is larger than this device's RAM. The
+                model may fail to load or run very slowly.
+              </span>
+            </div>
+          )}
+          {!diskShortfall && fit.level === "tight" && (
+            <div className="flex items-start gap-2 text-[10px] text-yellow-500 bg-yellow-500/10 border border-yellow-500/20 rounded p-2">
+              <AlertCircle className="w-3 h-3 mt-0.5 flex-shrink-0" />
+              <span>
+                Memory headroom is tight. The model should load but expect
+                slower generation if other apps are running.
+              </span>
+            </div>
+          )}
+
+          <label className="flex items-center gap-2 cursor-pointer select-none">
+            <Checkbox
+              checked={dontAskAgain}
+              onCheckedChange={(v) => setDontAskAgain(v === true)}
+              data-testid="confirm-skip-warning"
+            />
+            <span className="text-[11px] text-muted-foreground">
+              Don't ask again for this model this session
+            </span>
+          </label>
+        </div>
+
+        <DialogFooter>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={onCancel}
+            data-testid="btn-cancel-download"
+          >
+            Cancel
+          </Button>
+          <Button
+            size="sm"
+            onClick={() => onConfirm(dontAskAgain)}
+            disabled={diskShortfall}
+            data-testid="btn-confirm-download"
+            className="gap-1.5"
+          >
+            <Download className="w-3 h-3" />
+            Download
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function Row({
+  label,
+  value,
+  warning,
+  testId,
+}: {
+  label: string;
+  value: string;
+  warning?: boolean;
+  testId?: string;
+}) {
+  return (
+    <div className="flex items-center justify-between text-[11px]">
+      <span className="text-muted-foreground">{label}</span>
+      <span
+        className={`font-mono font-medium ${warning ? "text-red-500" : ""}`}
+        data-testid={testId}
+      >
+        {value}
+      </span>
     </div>
   );
 }

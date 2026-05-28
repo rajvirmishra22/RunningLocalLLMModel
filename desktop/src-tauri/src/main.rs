@@ -192,6 +192,30 @@ fn list_downloaded_models(app: tauri::AppHandle) -> Result<Vec<DownloadedModel>,
     download::list_downloaded(&app).map_err(|e| format!("{e:#}"))
 }
 
+#[derive(Serialize)]
+struct DiskFreeInfo {
+    #[serde(rename = "freeBytes")]
+    free_bytes: u64,
+    #[serde(rename = "totalBytes")]
+    total_bytes: u64,
+    path: String,
+}
+
+/// Report free/total disk space on the partition that holds the models
+/// directory. Used by the UI to warn before a multi-GB download starts.
+#[tauri::command]
+fn disk_free(app: tauri::AppHandle) -> Result<DiskFreeInfo, String> {
+    let dir = download::models_dir(&app).map_err(|e| format!("{e:#}"))?;
+    // fs2 needs a path that actually exists; models_dir creates it.
+    let free_bytes = fs2::available_space(&dir).map_err(|e| format!("disk probe failed: {e}"))?;
+    let total_bytes = fs2::total_space(&dir).map_err(|e| format!("disk probe failed: {e}"))?;
+    Ok(DiskFreeInfo {
+        free_bytes,
+        total_bytes,
+        path: dir.to_string_lossy().into_owned(),
+    })
+}
+
 #[tauri::command]
 fn delete_downloaded_model(
     app: tauri::AppHandle,
@@ -430,6 +454,7 @@ fn main() {
             cancel_download,
             probe_model_url,
             list_downloaded_models,
+            disk_free,
             delete_downloaded_model,
             embed_status,
             download_embed_model,

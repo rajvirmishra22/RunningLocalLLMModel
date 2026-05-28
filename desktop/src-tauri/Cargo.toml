@@ -29,6 +29,11 @@ futures-util = "0.3"
 # (llama-cpp-2 0.1.146 requires the caller to supply a Decoder).
 encoding_rs = "0.8"
 
+# Cross-platform free/total disk-space probe for the models directory.
+# Used by the `disk_free` command so the UI can warn before a multi-GB
+# download starts.
+fs2 = "0.4"
+
 # llama.cpp Rust bindings. Compiles llama.cpp from source on first build.
 # https://crates.io/crates/llama-cpp-2
 # Pinned to 0.1.146 — 0.1.54 embedded an older llama.cpp that can't load
