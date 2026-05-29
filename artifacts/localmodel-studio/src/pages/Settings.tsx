@@ -139,7 +139,7 @@ export default function Settings() {
               <div>
                 <p className="text-xs font-medium text-green-500">Local-first by default</p>
                 <p className="text-xs text-muted-foreground mt-0.5">
-                  Conversations, model profiles, and downloaded weights are stored locally in your browser. When you
+                  Conversations, model profiles, and downloaded weights are stored locally{isDesktop ? " on your device" : " in your browser"}. When you
                   chat with a local model, nothing leaves your device. If you opt into a cloud provider below,
                   messages for <em>that</em> provider are sent to OpenAI or Anthropic — every other local model
                   conversation still stays on your machine.
@@ -373,8 +373,9 @@ export default function Settings() {
             <div className="flex items-start gap-2 p-3 rounded-md bg-muted/40 border border-border">
               <Info className="w-3.5 h-3.5 text-muted-foreground mt-0.5 flex-shrink-0" />
               <p className="text-xs text-muted-foreground">
-                Downloaded model files are cached by your browser. To free disk space, clear site data for this app
-                in your browser settings.
+                {isDesktop
+                  ? "Downloaded model files are stored on disk. Manage or remove them from the Models page to free up space."
+                  : "Downloaded model files are cached by your browser. To free disk space, clear site data for this app in your browser settings."}
               </p>
             </div>
           </CardContent>

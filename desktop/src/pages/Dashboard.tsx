@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { useState } from "react";
 import { getSystemInfo } from "@/services/systemInfo";
 import { CapabilityModal } from "@/components/CapabilityModal";
-import { webllmService, WEBLLM_MODELS } from "@/services/webllmService";
+import { webllmService, WEBLLM_MODELS, isCustomCatalogSupported } from "@/services/webllmService";
 
 const compatColors: Record<string, string> = {
   supported: "bg-green-500/10 text-green-500 border-green-500/20",
@@ -17,6 +17,7 @@ export default function Dashboard() {
   const [sysInfo] = useState(() => getSystemInfo());
   const [showCapability, setShowCapability] = useState(false);
   const webgpuAvailable = webllmService.checkWebGPU();
+  const isDesktop = isCustomCatalogSupported();
 
   const ramGb = sysInfo.ram;
   const lowRam = ramGb !== null && ramGb < 4;
@@ -98,9 +99,15 @@ export default function Dashboard() {
           <div className="flex items-center gap-3 p-3.5 rounded-lg bg-green-500/10 border border-green-500/20">
             <Globe className="w-4 h-4 text-green-500 flex-shrink-0" />
             <div>
-              <p className="text-sm font-medium text-green-500">WebGPU detected — runs offline after first download</p>
+              <p className="text-sm font-medium text-green-500">
+                {isDesktop
+                  ? "Native engine ready — runs offline after first download"
+                  : "WebGPU detected — runs offline after first download"}
+              </p>
               <p className="text-xs text-muted-foreground mt-0.5">
-                Everything runs in your browser. Models download once over the internet, then run fully offline. No installs, no servers, no cloud.
+                {isDesktop
+                  ? "Everything runs natively on your machine via llama.cpp. Models download once over the internet, then run fully offline. No installs, no servers, no cloud."
+                  : "Everything runs in your browser. Models download once over the internet, then run fully offline. No installs, no servers, no cloud."}
               </p>
             </div>
           </div>
@@ -149,7 +156,7 @@ export default function Dashboard() {
                   ) : (
                     <XCircle className="w-3.5 h-3.5 text-muted-foreground" />
                   )}
-                  <span className="text-xs font-medium">In-Browser Inference</span>
+                  <span className="text-xs font-medium">{isDesktop ? "Native Inference" : "In-Browser Inference"}</span>
                 </div>
                 <span className="text-[10px] text-muted-foreground">
                   {webgpuAvailable ? "Ready" : "No WebGPU"}

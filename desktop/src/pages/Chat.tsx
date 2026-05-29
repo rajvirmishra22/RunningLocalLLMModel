@@ -14,7 +14,7 @@ import {
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import { storageService, Conversation, Message, ModelProfile, DEFAULT_GENERATION } from "@/services/storageService";
-import { webllmService, InitProgress, getCatalog } from "@/services/webllmService";
+import { webllmService, InitProgress, getCatalog, isCustomCatalogSupported } from "@/services/webllmService";
 import {
   loadCloudConfig,
   streamCloudChat,
@@ -1105,7 +1105,11 @@ function WebLLMLoadBanner({
             <div className="flex items-center gap-2.5">
               <Globe className="w-4 h-4 text-green-500 flex-shrink-0" />
               <div>
-                <p className="text-xs font-medium">{modelName} runs entirely in your browser</p>
+                <p className="text-xs font-medium">
+                  {isCustomCatalogSupported()
+                    ? `${modelName} runs natively on your machine`
+                    : `${modelName} runs entirely in your browser`}
+                </p>
                 <p className="text-[11px] text-muted-foreground">
                   Downloads once (~0.7–5 GB) via internet, then runs fully offline.
                 </p>
