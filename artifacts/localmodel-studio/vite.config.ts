@@ -50,6 +50,10 @@ export default defineConfig({
     alias: {
       "@": path.resolve(import.meta.dirname, "src"),
       "@assets": path.resolve(import.meta.dirname, "..", "..", "attached_assets"),
+      // Desktop-only Tauri import used by the shared Settings.tsx. The web build
+      // has no Tauri runtime; alias it to a stub so Vite resolves the bare
+      // specifier instead of 500ing. Desktop builds with its own Vite config.
+      "@tauri-apps/api/core": path.resolve(import.meta.dirname, "src", "lib", "tauri-core-stub.ts"),
     },
     dedupe: ["react", "react-dom"],
   },

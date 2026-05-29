@@ -479,11 +479,22 @@ export default function Chat() {
         console.error("RAG retrieval failed:", e);
       }
     }
+    // `attachmentBlock` (RAG excerpts + inlined file text) is what the MODEL
+    // needs, but it must never appear in the chat bubble. We keep it in
+    // `modelContent` and show only the user's typed text in `content`. The
+    // uploaded files surface as small chips via `attachments`.
     const attachmentBlock = ragBlock + buildAttachmentBlock(inlineFiles);
+    const modelText = attachmentBlock + (visibleText || "(see attached files)");
+    const attachmentChips: NonNullable<Message["attachments"]> = [
+      ...attachments.map((a) => ({ name: a.file.name, kind: "file" as const })),
+      ...images.map((img) => ({ name: img.name, kind: "image" as const })),
+    ];
     const userMsg: Message = {
       id: `msg_${Date.now()}`,
       role: "user",
-      content: attachmentBlock + (visibleText || "(see attached files)"),
+      content: visibleText,
+      modelContent: modelText !== visibleText ? modelText : undefined,
+      attachments: attachmentChips.length > 0 ? attachmentChips : undefined,
       timestamp: new Date().toISOString(),
     };
 
@@ -513,9 +524,11 @@ export default function Chat() {
     const controller = new AbortController();
     abortRef.current = controller;
 
+    // Send the augmented prompt (`modelContent`) to the model when present,
+    // falling back to the visible text. The bubbles still render `content`.
     const messagesForLLM = updatedConv.messages.map((m) => ({
       role: m.role as "user" | "assistant",
-      content: m.content,
+      content: m.modelContent ?? m.content,
     }));
 
     /** Build the cloud-side message list, replacing the last user turn with
@@ -659,13 +672,6 @@ export default function Chat() {
     setStreamingContent("");
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      sendMessage();
-    }
-  };
-
   const canSend =
     (input.trim().length > 0 || attachments.length > 0 || images.length > 0) &&
     !isAnyIndexing &&
@@ -673,6 +679,15 @@ export default function Chat() {
     !attaching &&
     !preparingImage &&
     (provider === "local" ? profiles.length > 0 && webllmReady : cloudReady);
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      // Mirror the Send button's disabled state so Enter can't bypass
+      // readiness guards (e.g. submitting while RAG indexing is still running).
+      if (canSend) sendMessage();
+    }
+  };
 
   return (
     <div className="flex h-full">
@@ -1169,37 +1184,40 @@ function MessageBubble({ message, modelName }: { message: Message; modelName?: s
       </div>
       <div className={cn("flex-1 min-w-0", isUser ? "flex flex-col items-end" : "")}>
         {!isUser && <p className="text-xs text-muted-foreground mb-1">{modelName ?? "Assistant"}</p>}
-        <div
-          className={cn(
-            "rounded-xl px-3.5 py-2.5 max-w-[85%]",
-            isUser ? "bg-primary text-primary-foreground" : "bg-muted text-foreground"
-          )}
-        >
-          <p className="text-sm whitespace-pre-wrap leading-relaxed">{message.content}</p>
-        </div>
+        {isUser && message.attachments && message.attachments.length > 0 && (
+          <div className="flex flex-wrap gap-1.5 mb-1.5 justify-end max-w-[85%]">
+            {message.attachments.map((a, i) => (
+              <span
+                key={i}
+                data-testid={`msg-attachment-${message.id}-${i}`}
+                title={a.name}
+                className="flex items-center gap-1 rounded-md border border-border bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground"
+              >
+                {a.kind === "image" ? (
+                  <ImageIcon className="w-3 h-3 flex-shrink-0" />
+                ) : (
+                  <Paperclip className="w-3 h-3 flex-shrink-0" />
+                )}
+                <span className="truncate max-w-[160px]">{a.name}</span>
+              </span>
+            ))}
+          </div>
+        )}
+        {message.content && (
+          <div
+            className={cn(
+              "rounded-xl px-3.5 py-2.5 max-w-[85%]",
+              isUser ? "bg-primary text-primary-foreground" : "bg-muted text-foreground"
+            )}
+          >
+            <p className="text-sm whitespace-pre-wrap leading-relaxed">{message.content}</p>
+          </div>
+        )}
         {message.stats && (
           <div data-testid={`stats-${message.id}`} className="flex items-center gap-3 mt-1.5 px-1">
             <StatBit icon={<Zap className="w-3 h-3" />} value={`${message.stats.tokensPerSec.toFixed(1)} tok/s`} />
             <StatBit icon={<Clock className="w-3 h-3" />} value={`${(message.stats.totalTimeMs / 1000).toFixed(1)}s`} />
             <StatBit value={message.stats.runtimeUsed} />
-          </div>
-        )}
-        {message.ragMeta && message.ragMeta.excerptCount > 0 && (
-          <div
-            data-testid={`rag-badge-${message.id}`}
-            className="mt-1.5 inline-flex items-center gap-1.5 px-2 py-0.5 rounded border border-primary/30 bg-primary/5 text-[10px] text-primary"
-            title={message.ragMeta.docs
-              .map((d) => `${d.usedExcerpts} from ${d.name}`)
-              .join(" · ")}
-          >
-            <BookOpen className="w-3 h-3" />
-            <span>
-              Used {message.ragMeta.excerptCount} excerpt
-              {message.ragMeta.excerptCount === 1 ? "" : "s"} from{" "}
-              {message.ragMeta.docs.length === 1
-                ? message.ragMeta.docs[0].name
-                : `${message.ragMeta.docs.length} documents`}
-            </span>
           </div>
         )}
         <p className="text-[10px] text-muted-foreground mt-1 px-1">

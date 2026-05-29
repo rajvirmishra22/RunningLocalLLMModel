@@ -37,7 +37,25 @@ export interface Conversation {
 export interface Message {
   id: string;
   role: "user" | "assistant";
+  /**
+   * What the user actually typed — this is the ONLY thing rendered in the
+   * chat bubble. Attachment text, RAG excerpts and any other internal
+   * plumbing never live here.
+   */
   content: string;
+  /**
+   * The full prompt actually sent to the model: attachment text and/or
+   * retrieved RAG excerpts prepended to `content`. Kept separate so the
+   * user never sees the extracted text, while the model still does, and so
+   * multi-turn history re-sends the same augmented context. Falls back to
+   * `content` when there was nothing to augment.
+   */
+  modelContent?: string;
+  /**
+   * Files/images attached to this turn, shown as small chips on the bubble
+   * so the user can see what they uploaded without seeing its contents.
+   */
+  attachments?: { name: string; kind: "file" | "image" }[];
   timestamp: string;
   stats?: { tokensPerSec: number; totalTimeMs: number; modelUsed: string; runtimeUsed: string; };
   /**

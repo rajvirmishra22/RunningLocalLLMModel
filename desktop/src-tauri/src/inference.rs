@@ -114,18 +114,33 @@ impl Engine {
             )
         };
 
+        let model_bytes = std::fs::metadata(&cleaned_path)
+            .map(|m| m.len())
+            .unwrap_or(0);
+
         let model = LlamaModel::load_from_file(&backend, &cleaned_path, &params)
             .with_context(|| format!("could not load GGUF at {cleaned_path:?}; {diag}"))?;
+
+        // Adaptive context window. The KV cache lives on top of the weights
+        // and its RAM cost scales with BOTH the model size and the context
+        // length, so we shrink the window as the weights grow. This keeps a
+        // 13B model from blowing past available RAM (which previously crashed
+        // the whole app) while still giving small models a generous window.
+        // The weights themselves stay resident once loaded — that's the bulk
+        // of idle memory; use Settings → Unload to reclaim it, or pick a
+        // smaller / more-quantised model.
+        const GB: u64 = 1024 * 1024 * 1024;
+        let ctx_size: u32 = match model_bytes {
+            0 => 8192,
+            n if n < 2 * GB => 16384, // ~1B–3B
+            n if n < 6 * GB => 8192,  // ~7B–8B
+            _ => 4096,                // ~13B and up
+        };
 
         Ok(Self {
             backend,
             model: Arc::new(model),
-            // 16K context — big enough to hold a 10-15 page student assignment
-            // plus a few turns of conversation. Goes up against KV-cache RAM
-            // cost: ~2 GB extra for an 8B model at 16K, ~500 MB for 1B/3B.
-            // 32K+ would be nicer but pushes 8B models past 16 GB of RAM
-            // on most laptops.
-            ctx_size: 16384,
+            ctx_size,
         })
     }
 
@@ -139,8 +154,17 @@ impl Engine {
         mut on_token: impl FnMut(&str),
         mut cancelled: impl FnMut() -> bool,
     ) -> Result<String> {
+        // Use all logical cores for token generation and prompt processing.
+        // The default is conservative; on CPU-only builds this is the single
+        // biggest lever on throughput. (On a GPU build most layers run on the
+        // GPU and this matters less.)
+        let n_threads = std::thread::available_parallelism()
+            .map(|n| n.get() as i32)
+            .unwrap_or(4);
         let ctx_params = LlamaContextParams::default()
-            .with_n_ctx(NonZeroU32::new(self.ctx_size));
+            .with_n_ctx(NonZeroU32::new(self.ctx_size))
+            .with_n_threads(n_threads)
+            .with_n_threads_batch(n_threads);
 
         let mut ctx = self
             .model

@@ -40,10 +40,30 @@ bash scripts/fetch-model.sh        # macOS/Linux
 pwsh scripts/fetch-model.ps1       # Windows PowerShell
 
 # 4. Build the production installer
+#    CPU-only (works everywhere, but slow for 7B+ models — a few tok/s):
 npm run tauri build
+
+#    GPU-accelerated (STRONGLY recommended — 5-20x faster decoding):
+#    Vulkan works across NVIDIA / AMD / Intel GPUs.
+npm run tauri build -- --features vulkan
+#    NVIDIA-only alternative (needs the CUDA toolkit on the build machine):
+#    npm run tauri build -- --features cuda
+#    macOS:
+#    npm run tauri build -- --features metal
 ```
 
 The installer no longer needs any extra binaries at build time — `cargo tauri build` works against a clean checkout. Local vision support is installed by the end-user from inside the app (see below).
+
+### Why decoding is slow — build with a GPU backend
+
+By default the crate compiles llama.cpp **CPU-only** (`[features] default = []`). On a CPU, a 7B–8B model decodes at only a few tokens/second no matter how many cores you have — it is memory-bandwidth bound. The code already requests `n_gpu_layers = 999`, but that is a no-op unless the binary was compiled with a GPU backend.
+
+To get full-speed inference (often 30-100+ tok/s on a discrete GPU), build with `--features vulkan` (portable) or `--features cuda` (NVIDIA). The build machine needs the matching SDK:
+
+- **Vulkan**: install the [Vulkan SDK](https://vulkan.lunarg.com/) (`VULKAN_SDK` on PATH). Runtime needs only the GPU driver's Vulkan loader, present on any machine with up-to-date GPU drivers.
+- **CUDA**: install the NVIDIA CUDA Toolkit. The resulting `.exe` only runs fast on NVIDIA GPUs.
+
+For a CI workflow, add the Vulkan SDK install step before `npm run tauri build -- --features vulkan`.
 
 ### Local vision helper (`llama-mtmd-cli`) — installed post-install, not bundled
 
@@ -103,9 +123,13 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: 20 }
       - uses: dtolnay/rust-toolchain@stable
+      # GPU acceleration: install the Vulkan SDK so the build can compile the
+      # Vulkan backend. Without this the .exe is CPU-only and slow on 7B+ models.
+      - uses: humbletim/install-vulkan-sdk@v1.2
+        with: { version: latest, cache: true }
       - run: cd desktop && npm install
       - run: cd desktop && pwsh scripts/fetch-model.ps1
-      - run: cd desktop && npm run tauri build
+      - run: cd desktop && npm run tauri build -- --features vulkan
       - uses: softprops/action-gh-release@v2
         with:
           files: desktop/src-tauri/target/release/bundle/nsis/*.exe
@@ -118,3 +142,6 @@ Drop this in `.github/workflows/build-windows.yml`. Push a tag like `v0.1.0` and
 - The first `cargo build` is slow (10–20 min) because it compiles llama.cpp from source via the `llama-cpp-2` bindings. Subsequent builds are incremental.
 - The bundled model is intentionally tiny (Qwen 2.5 0.5B Q4) so the installer stays under ~500 MB. Larger models (Llama 3.2 3B, Phi 3.5, Mistral 7B) can be downloaded from inside the app post-install if you wire up a model manager — left as a future addition.
 - The desktop build does NOT use WebGPU — it uses native CPU/GPU through llama.cpp's backends. WebGPU is only used by the in-browser version at `/app/`.
+- **Decoding speed**: a CPU-only build runs 7B+ models at only a few tok/s. Build with `--features vulkan` (or `cuda`/`metal`) for 5-20x faster inference. See "Why decoding is slow" above. The engine also sets `n_threads` to the full logical core count automatically.
+- **Idle memory**: once a model is loaded its weights stay resident in RAM (that's the bulk of the footprint — e.g. ~4-5 GB for an 8B Q4 model, ~2 GB for a 3B). This is inherent to local inference. To reclaim it, use **Settings → Unload model**, or pick a smaller / more-quantised model. The KV cache (context) is allocated only during generation and freed afterwards.
+- **Context window is adaptive** (`inference.rs`): the window shrinks as the model grows (16K for ≤3B, 8K for 7-8B, 4K for 13B+) so big models don't exhaust RAM and crash the app. Over-long prompts/attachments return a clean error instead of force-quitting.
