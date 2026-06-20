@@ -20,8 +20,9 @@
     "types": ["node", "vite/client"],
     "baseUrl": ".",
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": ["./src/*"],
+      "@workspace/api-client-react": ["./stubs/api-client-react.ts"]
     }
   },
-  "include": ["src"]
+  "include": ["src", "stubs"]
 }

@@ -18,6 +18,10 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "src"),
+      // Desktop lives outside the pnpm workspace and cannot resolve
+      // `@workspace/*`. Connections.tsx is shared verbatim, so alias the
+      // generated workspace API client to a desktop-local stub.
+      "@workspace/api-client-react": path.resolve(__dirname, "stubs/api-client-react.ts"),
     },
     dedupe: ["react", "react-dom"],
   },

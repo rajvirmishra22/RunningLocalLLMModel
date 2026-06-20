@@ -75,7 +75,9 @@ cp /tmp/ragBackend.desktop.ts desktop/src/services/rag/ragBackend.ts
 cp /tmp/Models.desktop.tsx desktop/src/pages/Models.tsx
 ```
 
-This is by design — desktop is outside the pnpm workspace, so we can't import the web's source directly. Keeping them in sync via copy + two overlays is the simplest contract.
+This is by design — desktop is outside the pnpm workspace, so we can't import the web's source directly. Keeping them in sync via copy + three overlays is the simplest contract.
+
+**Workspace-package imports (`@workspace/*`) in shared pages.** Some shared pages import generated workspace packages — currently `pages/Connections.tsx` imports `@workspace/api-client-react` (the Canvas client). Desktop can't resolve `@workspace/*`, so instead of forking the page we alias the specifier to a desktop-local stub in **both** `desktop/vite.config.ts` (resolve.alias) and `desktop/tsconfig.json` (paths). The stub lives at `desktop/stubs/api-client-react.ts` — **outside `desktop/src/`**, so the mirror `cp` never clobbers it and it does NOT need to be saved/restored like the overlays. The stub re-declares the Canvas types and posts to the same `/api/canvas/*` endpoints, but against `import.meta.env.VITE_API_BASE_URL` (the deployed api-server origin, since the Tauri webview has no same-origin `/api`); if that env var is unset at build time, Canvas calls fail with a clear message. If a shared page starts importing a new `@workspace/*` package, add a matching alias + stub the same way.
 
 ### What works in the desktop build (vs the web build)
 
