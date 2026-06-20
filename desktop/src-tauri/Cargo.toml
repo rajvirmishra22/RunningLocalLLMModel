@@ -47,6 +47,13 @@ tempfile = "3"
 # Phi 3.5 / Mistral 0.3 quants). 0.1.146 vendors a recent llama.cpp and
 # uses the new `LlamaSampler` chain API (see inference.rs).
 llama-cpp-2 = "=0.1.146"
+# MUST pin the -sys crate to the SAME version. llama-cpp-2 0.1.146 declares its
+# sys dep as `^0.1.146`, so without this exact pin Cargo greedily resolves the
+# newest in-range release (0.1.147+/0.1.150) whose generated FFI bindings rename
+# symbols the 0.1.146 wrapper calls (e.g. `llama_memory_breakdown_print`,
+# `llama_params_fit`) — the build then fails with ~21 "cannot find function in
+# crate llama_cpp_sys_2" errors. Keep this version locked to llama-cpp-2 above.
+llama-cpp-sys-2 = "=0.1.146"
 
 [features]
 default = []

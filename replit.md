@@ -116,6 +116,7 @@ LocalModel Studio is for developers and AI enthusiasts who want to run open-sour
 - The in-browser build requires WebGPU (Chrome 113+ / Edge 113+ on a device with a supported GPU). First model load needs internet; after that the model runs offline.
 - The desktop `.exe` is **not** built from inside Replit — Replit is Linux and can't produce a signed Windows installer. Use a Windows machine or GitHub Actions; see `desktop/README.md` for the workflow.
 - The first `cargo tauri build` is slow (10–20 min) because `llama-cpp-2` compiles llama.cpp from source. Subsequent builds are incremental.
+- `llama-cpp-2` and `llama-cpp-sys-2` must be pinned to the **same** exact version in `desktop/src-tauri/Cargo.toml` (both `=0.1.146`). The wrapper declares its sys dep as `^0.1.146`, so pinning only the wrapper lets Cargo pull a newer sys (0.1.147+) whose FFI bindings rename symbols — the Windows build then dies with ~21 `cannot find function ... in crate llama_cpp_sys_2` errors. There is no committed `Cargo.lock` (build happens on Windows/CI), so the Cargo.toml pins are the only guard.
 - The desktop build does NOT use WebGPU. It uses llama.cpp's CPU/CUDA/Vulkan backends directly.
 
 ## Pointers
