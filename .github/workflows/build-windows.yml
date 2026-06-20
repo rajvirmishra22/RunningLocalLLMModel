@@ -42,6 +42,15 @@ jobs:
       - name: Build Tauri installer
         working-directory: desktop
         run: npm run tauri build
+        env:
+          # Bakes the deployed StudyCore api-server origin into the desktop build
+          # so the Canvas (LMS) sync feature can reach the /api/canvas/* proxy.
+          # Set this as a repo secret: Settings -> Secrets and variables ->
+          # Actions -> New repository secret -> name VITE_API_BASE_URL, value
+          # your published URL (e.g. https://your-app.replit.app). If left unset,
+          # the build still succeeds; the Connections screen just shows a clear
+          # "Canvas sync isn't configured" message.
+          VITE_API_BASE_URL: ${{ secrets.VITE_API_BASE_URL }}
       - uses: actions/upload-artifact@v4
         with:
           name: LocalModelStudio-Windows-Installer

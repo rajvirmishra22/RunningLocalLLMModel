@@ -9,7 +9,7 @@ A self-contained AI chat app that runs open-source language models entirely on t
 
 - `artifacts/landing/` — marketing & download site, served at `/`. Dual CTA: "Download for Windows" (placeholder URL until the `.exe` is published) + "Try in browser" (→ `/app/`).
 - `artifacts/localmodel-studio/` — in-browser chat app served at `/app/`. WebGPU + WebLLM.
-- `artifacts/api-server/` — scaffold; not used.
+- `artifacts/api-server/` — Express api-server served at `/api`. Hosts the Canvas (LMS) proxy (`src/routes/canvas.ts`, `/api/canvas/*`) used by the Connections page to import courses/assignments without exposing the user's Canvas token to the browser. Uses `cors()` so the desktop (cross-origin Tauri webview) can reach it. The desktop build must be built with `VITE_API_BASE_URL` set to the deployed origin of this server (see the desktop mirror contract + `.github/workflows/build-windows.yml`).
 - `artifacts/mockup-sandbox/` — canvas/mockup sandbox; not used in production.
 - `desktop/` — **not** a Replit artifact and **not** part of the pnpm workspace. The full source for the Tauri + llama.cpp native build, including the React UI, Rust backend, bundler config, and model-fetch scripts. Built externally (Windows machine or GitHub Actions) to produce a real signed `.exe`. See `desktop/README.md`.
 
