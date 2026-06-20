@@ -17,6 +17,18 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: desktop/src-tauri -> target
+      # llama-cpp-2 builds llama.cpp from source and runs `bindgen`, which needs
+      # libclang. windows-latest ships LLVM preinstalled at C:\Program Files\LLVM;
+      # bindgen can't always locate it, so point LIBCLANG_PATH at it explicitly
+      # (falling back to a choco install if the runner image ever drops it).
+      - name: Provision libclang for llama-cpp-2 (bindgen)
+        shell: pwsh
+        run: |
+          $llvm = "C:\Program Files\LLVM\bin"
+          if (-not (Test-Path "$llvm\libclang.dll")) {
+            choco install llvm -y
+          }
+          "LIBCLANG_PATH=$llvm" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
       - name: Install JS dependencies
         working-directory: desktop
         run: npm install
