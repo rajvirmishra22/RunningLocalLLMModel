@@ -4,14 +4,21 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import Layout from "@/components/Layout";
-import Dashboard from "@/pages/Dashboard";
-import Chat from "@/pages/Chat";
+import Home from "@/pages/Home";
+import Assignments from "@/pages/Assignments";
+import Planner from "@/pages/Planner";
+import Grades from "@/pages/Grades";
+import Growth from "@/pages/Growth";
+import CourseLibrary from "@/pages/CourseLibrary";
+import StudySpace from "@/pages/Chat";
+import RubricChecker from "@/pages/RubricChecker";
 import Models from "@/pages/Models";
-import Tuning from "@/pages/Tuning";
+import Connections from "@/pages/Connections";
+import Privacy from "@/pages/Privacy";
 import Settings from "@/pages/Settings";
-import KnowledgeBase from "@/pages/KnowledgeBase";
 import NotFound from "@/pages/not-found";
 import { storageService } from "@/services/storageService";
+import { seedStudyCore } from "@/services/studycore/seed";
 
 const queryClient = new QueryClient();
 
@@ -19,12 +26,19 @@ function AppRoutes() {
   return (
     <Layout>
       <Switch>
-        <Route path="/" component={Dashboard} />
-        <Route path="/chat" component={Chat} />
+        <Route path="/" component={Home} />
+        <Route path="/assignments/:id" component={Assignments} />
+        <Route path="/assignments" component={Assignments} />
+        <Route path="/planner" component={Planner} />
+        <Route path="/grades" component={Grades} />
+        <Route path="/growth" component={Growth} />
+        <Route path="/library" component={CourseLibrary} />
+        <Route path="/study-space" component={StudySpace} />
+        <Route path="/rubric" component={RubricChecker} />
         <Route path="/models" component={Models} />
-        <Route path="/tuning" component={Tuning} />
+        <Route path="/connections" component={Connections} />
+        <Route path="/privacy" component={Privacy} />
         <Route path="/settings" component={Settings} />
-        <Route path="/knowledge-base" component={KnowledgeBase} />
         <Route component={NotFound} />
       </Switch>
     </Layout>
@@ -40,6 +54,7 @@ function App() {
       document.documentElement.classList.add("dark");
     }
     storageService.seedInitialData();
+    seedStudyCore();
   }, []);
 
   return (

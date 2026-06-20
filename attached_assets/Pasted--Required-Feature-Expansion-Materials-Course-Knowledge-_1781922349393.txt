@@ -1,0 +1,922 @@
+# Required Feature Expansion: Materials, Course Knowledge Base, Planner, Rubric Checker, Privacy Center, and Grade Simulator
+
+Integrate the following features into the existing StudyCore AI student-focused app update. These are required additions to the product scope.
+
+Do not remove or break:
+
+* Existing local AI model functionality.
+* Canvas and Microsoft Teams assignment integrations.
+* OpenAI API and Anthropic API optional integrations.
+* Assignments, Grades, Growth, Study Space, Models, Connections, and Settings tabs.
+* Academic integrity protections already described.
+* Local-first privacy behavior.
+
+Update the navigation to include:
+
+1. Home
+2. Assignments
+3. Planner
+4. Grades
+5. Growth
+6. Course Library
+7. Study Space
+8. Models
+9. Connections
+10. Privacy Center
+11. Settings
+
+Course Library should only become fully visible after the student enables the optional Course Knowledge Base feature. Before enabling it, either hide it from the main navigation or display it with a clean enable-feature empty state.
+
+# 1. Assignment Materials Workflow
+
+Every assignment, whether synced from Canvas, synced from Microsoft Teams, or manually created by the student, must support related materials.
+
+## Automatically Synced Assignment Materials
+
+When available through the connected school provider, retrieve materials associated with an assignment, including:
+
+* Teacher-provided PDFs.
+* Rubrics.
+* Worksheets.
+* Reading packets.
+* Instructions.
+* Starter files.
+* Templates.
+* Linked documents that the authenticated student is permitted to access.
+* Microsoft Teams assignment resources when available.
+* Canvas-linked or Canvas-accessible assignment materials when available.
+
+Because Canvas may not expose every related teacher file cleanly through a single assignment endpoint, always provide manual upload as a fallback.
+
+Every assignment workspace must include a Materials panel with three sections:
+
+### Synced Materials
+
+Materials retrieved automatically from Canvas or Teams when accessible.
+
+Each file should show:
+
+* File name.
+* File type.
+* Source provider.
+* Whether the file has been downloaded or only linked.
+* Open/preview button when supported.
+* Include in AI Context toggle.
+
+### Added Materials
+
+Materials manually uploaded by the student.
+
+Students must be able to upload:
+
+* PDF files.
+* Word documents.
+* PowerPoint files.
+* Text files.
+* Markdown files.
+* Images.
+* Code files.
+* CSV files where relevant.
+* Their own draft or work-in-progress.
+
+Each uploaded file should show:
+
+* File name.
+* File type.
+* Upload time.
+* Associated assignment.
+* Include in AI Context toggle.
+* Remove button.
+* Processing/indexing state if the Course Knowledge Base feature is enabled.
+
+### Generated Materials
+
+Materials produced inside the app, such as:
+
+* AI-created study guide.
+* Checklist.
+* Assignment breakdown.
+* Rubric analysis report.
+* Practice quiz.
+* Flashcards if added later.
+* Study plan.
+
+Generated materials should be saved locally and associated with the assignment.
+
+# 2. Required File Upload Question During AI Help Flow
+
+Update the “Get AI Help” workflow for every assignment.
+
+Before an assignment is sent to any local or cloud model, the student must be asked whether they want to provide additional related files.
+
+The updated AI Help workflow must be:
+
+## Step 1: Review Assignment
+
+Show:
+
+* Assignment title.
+* Course.
+* Assignment instructions.
+* Due date.
+* Assignment type detection.
+* Existing synced materials from Canvas or Teams.
+* Existing student-added materials.
+
+Allow the student to correct the detected assignment type.
+
+## Step 2: Add Related Materials
+
+Display a polished screen with the title:
+
+“Do you want to add any related files before AI helps you?”
+
+Subtitle:
+
+“Upload your rubric, instructions, teacher resources, notes, draft, starter code, or any other materials that would help the AI give a better response.”
+
+Provide three clear actions:
+
+### Upload Related Files
+
+Opens a drag-and-drop upload area and file picker.
+
+Accepted examples:
+
+* Rubric PDF.
+* Draft essay.
+* Worksheet.
+* Lab instructions.
+* Starter code.
+* Reading packet.
+* Notes.
+* Project requirements.
+* Teacher-provided template.
+
+### Use Existing Materials Only
+
+Continues using only assignment instructions and files already synced or previously uploaded.
+
+### Continue Without Materials
+
+Uses only the assignment instructions currently available.
+
+Below these actions, show all currently available materials with individual checkboxes:
+
+* Include assignment instructions.
+* Include synced rubric.
+* Include attached worksheet.
+* Include uploaded notes.
+* Include uploaded draft.
+* Include course knowledge base, only if enabled.
+
+The student chooses exactly what materials are included in AI context.
+
+## Step 3: Choose Help Mode
+
+Preserve the existing help mode behavior:
+
+For normal assignments:
+
+* Guide Me Step by Step.
+* Create a Draft or Starting Solution.
+
+For tests, quizzes, timed assessments, midterms, finals, or exams:
+
+* Automatically restrict the user to Study Guide Mode.
+* Do not generate answers for active assessments.
+
+## Step 4: Choose Model
+
+Show:
+
+* Available local models.
+* Recommended local model.
+* OpenAI API models only when configured.
+* Anthropic API models only when configured.
+* Privacy badge.
+* Estimated performance.
+* Context-size warning if selected files exceed a model’s usable context window.
+
+## Step 5: Confirm Context and Privacy
+
+Before generation, show a final confirmation panel listing:
+
+* Assignment instructions included.
+* Files included.
+* Course knowledge base included or excluded.
+* Selected model.
+* Whether processing occurs locally or in the cloud.
+
+For local models, show:
+
+“Processed locally. Selected assignment content and files remain on your device.”
+
+For OpenAI API or Anthropic API, show:
+
+“Cloud processing selected. The assignment information and files listed above will be sent to the selected AI provider for this request.”
+
+Require an explicit confirmation before sending any assignment content, grades, feedback, or uploaded files to a cloud provider.
+
+## Step 6: Assignment Workspace
+
+Open the AI assistance workspace with:
+
+* Assignment instructions.
+* Selected materials.
+* AI conversation.
+* Help mode.
+* Model badge.
+* Local/cloud privacy badge.
+* Ability to add more materials later.
+* Ability to regenerate using newly added files.
+* Ability to switch models with another privacy confirmation if switching to cloud.
+
+# 3. Optional Course Materials Library with Local Knowledge Base
+
+Implement an optional Course Knowledge Base feature.
+
+This feature is not automatically enabled for every student. It must be opt-in.
+
+## Enable Flow
+
+In either onboarding, the Course Library tab, or Settings > AI Preferences, show an optional feature card:
+
+Title:
+“Enable Course Knowledge Base”
+
+Description:
+“Create a private, searchable library of your notes, rubrics, study guides, slides, readings, and class resources. When enabled, local AI models can reference selected course materials when helping you study or complete assignments.”
+
+Include:
+
+* Enable button.
+* Learn More button.
+* Privacy explanation.
+* Storage usage estimate.
+* Confirmation that disabling the feature can remove indexed content.
+
+Default state:
+
+* Off.
+
+When enabled:
+
+* Add Course Library to the sidebar navigation if it was hidden.
+* Allow students to create or sync course folders.
+* Allow documents to be indexed locally.
+* Allow per-assignment toggles for using relevant course context.
+
+## Course Library Page
+
+Create a page where the student sees one card per course.
+
+Each course card shows:
+
+* Course name.
+* Connected source: Canvas, Teams, or Manual.
+* Number of materials.
+* Last updated date.
+* Locally indexed status.
+* Storage used.
+* Open Library button.
+
+Inside each course library, students can:
+
+* Upload files manually.
+* Save synced assignment materials into the course library.
+* Add class notes.
+* Add study guides.
+* Add rubrics.
+* Add previous graded assignments and feedback when available.
+* Remove materials.
+* Search materials.
+* Preview extracted text where supported.
+* Re-index materials.
+* Delete all indexed materials for the course.
+
+## Local Indexing and Retrieval
+
+Implement local retrieval-augmented generation for course materials when feasible within the current app architecture.
+
+Requirements:
+
+* Index materials locally by default.
+* Store extracted text and embeddings locally.
+* Do not upload course materials to any external vector database.
+* Use a local vector store or locally persisted embedding/index solution compatible with the app architecture.
+* Allow indexing only selected files rather than forcing all materials into the knowledge base.
+* Show indexing progress and error states.
+* Let students delete embeddings and extracted text at any time.
+
+## Assignment-Level Toggle
+
+Inside the AI Help flow, when the Course Knowledge Base feature is enabled, include a toggle:
+
+“Use Course Knowledge Base for this request”
+
+Description:
+“Allow the AI to reference indexed materials from this course while helping with this assignment.”
+
+Default behavior:
+
+* For local models: toggle may be available but should start off unless the student previously set a preference.
+* For cloud models: toggle must always default to off.
+
+When the student turns this on for a cloud provider, show a stronger confirmation:
+
+“This may send selected excerpts from your locally indexed course materials to the cloud AI provider you chose. Review the included sources before continuing.”
+
+Before generation, display which source files or retrieved excerpts are being included.
+
+## Course Library Privacy Controls
+
+Students must be able to:
+
+* Disable the Course Knowledge Base.
+* Delete the entire local index.
+* Delete a single course index.
+* Delete individual files.
+* Exclude specific materials from AI retrieval.
+* View whether a response used course library materials.
+* See source references for responses based on indexed documents.
+
+# 4. Planner Tab and Automatic Study Planning
+
+Implement a dedicated Planner page that transforms assignments and test dates into an editable study schedule.
+
+## Planner Purpose
+
+The Planner should help students decide when to work on assignments, rather than only showing what is due.
+
+It should use:
+
+* Connected Canvas assignments.
+* Connected Teams assignments.
+* Manually added assignments.
+* Known test dates.
+* Assignment due dates.
+* Assignment type.
+* Student-entered estimated difficulty.
+* AI-estimated work time where enabled.
+* Student availability preferences.
+
+## Initial Planner Setup
+
+When the student first opens Planner, show an onboarding card asking for:
+
+* Typical available study hours on weekdays.
+* Typical available study hours on weekends.
+* Preferred maximum homework time per day.
+* Preferred work session length:
+
+  * 25 minutes.
+  * 45 minutes.
+  * 60 minutes.
+  * Custom.
+* Whether to avoid scheduling work on certain days.
+* Whether to prioritize overdue work automatically.
+* Whether to automatically spread major projects across multiple days.
+
+Store these settings locally and allow editing later.
+
+## Planner Views
+
+Provide:
+
+* Week calendar view.
+* Month calendar view.
+* Agenda/list view.
+* Today focus view.
+
+## Schedule Generation
+
+Add a button:
+
+“Generate My Study Plan”
+
+When clicked:
+
+* Analyze upcoming assignments and known assessments.
+* Estimate how much work each assignment may require.
+* Break large assignments into smaller work sessions.
+* Spread long-term projects over multiple days.
+* Schedule review sessions before quizzes/tests/exams.
+* Prioritize overdue and soon-due assignments.
+* Respect student availability and maximum daily study time.
+
+Every generated study block should show:
+
+* Assignment or test associated with the block.
+* Course.
+* Task name.
+* Estimated duration.
+* Reason it was scheduled there.
+* Completion checkbox.
+* Reschedule button.
+* Open Assignment button.
+* Get AI Help button.
+
+Examples:
+
+* “AP Lang: Draft thesis and find evidence — 45 minutes.”
+* “AP Calculus: Review integration techniques for test — 30 minutes.”
+* “Computer Science: Debug project methods — 60 minutes.”
+
+## Manual Editing
+
+Students must be able to:
+
+* Drag and drop study blocks to new days/times.
+* Change durations.
+* Mark tasks complete.
+* Delete generated study blocks.
+* Add custom tasks.
+* Regenerate only unscheduled or incomplete work.
+* Lock a study block so it is preserved during regeneration.
+
+## AI and Privacy Behavior
+
+Study plan generation should prefer a capable local model when available.
+
+If the student chooses OpenAI API or Anthropic API:
+
+* Inform them what assignment metadata will be sent.
+* Allow them to choose whether full assignment instructions are included or only title/due date/type.
+* Require explicit confirmation before cloud processing.
+
+# 5. Rubric Checker
+
+Implement a Rubric Checker feature inside assignment workspaces and Study Space.
+
+## Purpose
+
+Students should be able to compare their own draft or project work against a rubric before submission.
+
+The feature should help identify missing requirements and areas for improvement without automatically submitting anything to Canvas or Teams.
+
+## Access Points
+
+Add a button labeled:
+
+“Check Against Rubric”
+
+This button should appear:
+
+* In assignment detail views when a rubric is synced or uploaded.
+* In the assignment AI workspace.
+* In Study Space when the student uploads a rubric and their own draft.
+
+## Required Inputs
+
+The Rubric Checker should require:
+
+* A rubric, either synced from Canvas/Teams or uploaded manually.
+* The student’s current draft or work, uploaded or pasted manually.
+
+The feature must not run unless both are present.
+
+## Rubric Checker Workflow
+
+### Step 1: Choose Rubric
+
+Show:
+
+* Synced rubrics.
+* Uploaded rubrics.
+* Upload New Rubric button.
+
+### Step 2: Add Student Work
+
+Allow:
+
+* Paste draft text.
+* Upload document.
+* Upload code/project text files where relevant.
+* Select an existing uploaded draft.
+
+### Step 3: Choose Model
+
+Allow:
+
+* Local model.
+* OpenAI API if connected.
+* Anthropic API if connected.
+
+Default recommendation:
+
+* Prefer local processing when a sufficiently capable local model is available.
+
+Cloud providers require a confirmation explaining that the rubric and student draft will be sent to that provider.
+
+### Step 4: Generate Rubric Analysis
+
+Output a professional report organized by rubric criteria.
+
+For each criterion, display:
+
+* Criterion name.
+* Requirement summary.
+* Evidence currently present in the student’s draft.
+* Missing or weak elements.
+* Specific revision suggestion.
+* Confidence indicator or “Needs student review” label.
+
+Also include:
+
+* Overall strengths.
+* Highest-priority revisions.
+* Final checklist before submission.
+* Optional revised outline or revision plan.
+
+Important restrictions:
+
+* Do not claim an official score unless the teacher already provided one.
+* Do not promise a grade.
+* Do not automatically rewrite the entire assignment unless the student intentionally requests an allowed draft revision.
+* Do not submit work anywhere.
+* Treat analysis as feedback, not grading.
+
+## Saved Rubric Reports
+
+Allow students to:
+
+* Save rubric analysis reports locally.
+* Compare older and newer drafts.
+* Mark rubric items complete.
+* Delete reports.
+* Re-run analysis after uploading a new draft.
+
+# 6. Privacy Control Center
+
+Implement a dedicated Privacy Center page accessible from the main navigation.
+
+This page is essential to the app’s trust and privacy positioning.
+
+## Privacy Center Dashboard
+
+At the top, display a clear summary:
+
+* Local Models: Enabled / Not Configured.
+* Cloud Providers Connected: OpenAI API, Anthropic API, or None.
+* School Platforms Connected: Canvas, Teams, or None.
+* Course Knowledge Base: Enabled / Disabled.
+* Cached Academic Files: Count and storage size.
+* Local Conversations: Count and storage size.
+* Cloud Requests This Month: Count, only if tracked locally without storing sensitive content.
+
+## Processing History
+
+Maintain a local-only processing history that records metadata for AI requests without storing full sensitive prompts unless the student chooses to retain chats.
+
+Each history entry should show:
+
+* Date and time.
+* Action type: Assignment Help, Rubric Check, Growth Summary, Study Plan, General Chat.
+* Model used.
+* Local or Cloud badge.
+* Provider if cloud.
+* Whether files were included.
+* Whether course knowledge base excerpts were included.
+
+Do not display or retain full assignment content in the processing history unless the user saved the associated conversation.
+
+Allow:
+
+* Filter by local/cloud.
+* Filter by provider.
+* Clear processing history.
+
+## Cloud Data Confirmation Controls
+
+Create settings for:
+
+* Always ask before sending assignment content to cloud AI. This must be permanently enabled and not disableable.
+* Ask before sending files to cloud AI. This must be permanently enabled and not disableable.
+* Ask before sending teacher feedback to cloud AI. This must be permanently enabled and not disableable.
+* Ask before sending Course Knowledge Base excerpts to cloud AI. This must be permanently enabled and not disableable.
+
+The interface can display these as locked privacy protections.
+
+## Connected Provider Controls
+
+For Canvas, Teams, OpenAI API, and Anthropic API, show:
+
+* Connection status.
+* What information is accessed.
+* Last sync or last used timestamp.
+* Disconnect button.
+* Delete locally cached provider data button where applicable.
+
+## Local Data Management
+
+Allow students to delete:
+
+* Cached assignments.
+* Cached grades.
+* Cached feedback.
+* Uploaded assignment materials.
+* Course Knowledge Base files.
+* Course Knowledge Base embeddings/index.
+* Saved chats.
+* Rubric reports.
+* Study plans.
+* Processing history.
+* Saved API credentials.
+* All local academic data.
+
+Provide a clear high-risk action:
+
+“Delete All Local Academic Data”
+
+Require a confirmation dialog explaining exactly what will be deleted.
+
+## Privacy Indicators Throughout the App
+
+Use consistent badges across the app:
+
+* Local Only
+* Cloud Processing
+* Canvas Synced
+* Teams Synced
+* Stored on Device
+* Included in AI Context
+* Not Included
+
+Every assignment AI workspace, rubric check, growth summary, and study plan must display the relevant privacy badge.
+
+# 7. What-If Grade Calculator
+
+Implement a grade simulation tool inside the Grades tab.
+
+## Purpose
+
+Students should be able to explore possible future grade outcomes without changing anything in Canvas or Teams.
+
+## Important Labeling
+
+Always prominently display:
+
+“Unofficial Projection — Your actual course grade is determined by your teacher and your school platform.”
+
+Never display a simulated grade as the official Canvas or Teams grade.
+
+## Access
+
+Each course card in Grades should include:
+
+“What-If Calculator”
+
+Clicking it opens a detailed grade simulation view for that course.
+
+## Data Sources
+
+Use:
+
+* Synced graded assignments.
+* Synced assignment points.
+* Official current grade only when exposed by Canvas or Teams.
+* Assignment group/category weights only when exposed and reliable.
+* Future assignments already listed in Canvas or Teams when accessible.
+* Student-created hypothetical assignments when needed.
+
+## Calculation Modes
+
+### Accurate Weighted Mode
+
+Use only when category weights and relevant scoring information are available from the provider.
+
+Display:
+“Calculated using synced assignment category weights.”
+
+### Points-Based Estimate Mode
+
+Use when assignment point totals are available but official weighting is not.
+
+Display:
+“Estimated using visible assignment points. Your class may use weighting, dropped scores, extra credit, or other grading policies not included here.”
+
+### Manual Setup Mode
+
+When not enough grading structure is available, allow the student to enter:
+
+* Grade categories.
+* Weights.
+* Current scores.
+* Future assignment values.
+
+Display:
+“Based on values you entered manually.”
+
+## Calculator Features
+
+Allow students to:
+
+* Change potential scores for ungraded assignments.
+* Add hypothetical future assignments.
+* See projected overall percentage.
+* See the difference between current visible grade and projected result.
+* Determine the score needed on an upcoming assignment to reach a target grade.
+* Reset all hypothetical values.
+* Save scenarios locally with names such as:
+
+  * “Best case.”
+  * “Realistic case.”
+  * “Minimum needed for an A.”
+
+## Visual Design
+
+The What-If Calculator should include:
+
+* Current official or visible score card.
+* Projected score card.
+* Scenario selector.
+* Assignment score sliders or editable score inputs.
+* Category weighting visualization when available.
+* Clear disclaimer banner.
+* Save scenario button.
+* Reset button.
+
+## Privacy
+
+All grade simulations should run locally.
+Do not send grade data to a cloud AI provider because the grade calculator can be implemented deterministically without AI.
+
+# 8. Additional Data Types
+
+Add or update the shared internal types to support these features:
+
+```ts
+interface AssignmentMaterial {
+  id: string;
+  assignmentId: string;
+  courseId?: string;
+  source: "canvas" | "teams" | "student_upload" | "ai_generated";
+  fileName: string;
+  fileType: string;
+  localPath?: string;
+  externalUrl?: string;
+  extractedTextAvailable: boolean;
+  indexedInCourseLibrary: boolean;
+  includedInCurrentAIContext: boolean;
+  createdAt: string;
+}
+
+interface CourseLibrarySettings {
+  enabled: boolean;
+  defaultUseForLocalRequests: boolean;
+  defaultUseForCloudRequests: false;
+  indexedCourseIds: string[];
+  localStorageUsedBytes: number;
+}
+
+interface StudyPlan {
+  id: string;
+  createdAt: string;
+  modelId?: string;
+  processingType: "local" | "cloud" | "deterministic";
+  blocks: StudyBlock[];
+}
+
+interface StudyBlock {
+  id: string;
+  assignmentId?: string;
+  courseId?: string;
+  title: string;
+  scheduledStart: string;
+  durationMinutes: number;
+  completed: boolean;
+  locked: boolean;
+  generatedReason?: string;
+}
+
+interface RubricAnalysisReport {
+  id: string;
+  assignmentId?: string;
+  rubricMaterialId: string;
+  studentWorkMaterialId: string;
+  generatedAt: string;
+  generatedByModelId: string;
+  processingType: "local" | "cloud";
+  criteriaResults: RubricCriterionResult[];
+  strengths: string[];
+  priorityRevisions: string[];
+  finalChecklist: string[];
+}
+
+interface RubricCriterionResult {
+  criterionName: string;
+  requirementSummary: string;
+  evidenceFound: string[];
+  missingOrWeakElements: string[];
+  revisionSuggestions: string[];
+}
+
+interface GradeSimulationScenario {
+  id: string;
+  courseId: string;
+  name: string;
+  mode: "weighted" | "points_estimate" | "manual";
+  hypotheticalScores: HypotheticalScore[];
+  projectedPercentage?: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface ProcessingHistoryEntry {
+  id: string;
+  timestamp: string;
+  actionType: "assignment_help" | "rubric_check" | "growth_summary" | "study_plan" | "general_chat";
+  modelId: string;
+  processingType: "local" | "cloud";
+  provider?: "openai" | "anthropic";
+  includedFiles: boolean;
+  includedCourseLibraryExcerpts: boolean;
+}
+```
+
+# 9. Updated Implementation Order
+
+After completing the earlier phases of the product update, implement these additions in the following order:
+
+## Phase 9: Assignment Materials
+
+* Add the Materials panel to every assignment.
+* Add automatic synced-material handling where providers expose accessible files.
+* Add student file uploads to every assignment.
+* Add generated materials storage.
+* Insert the required upload-materials question into every AI Help flow.
+* Add local/cloud context confirmation.
+
+## Phase 10: Optional Course Knowledge Base
+
+* Add feature enable/disable flow.
+* Add Course Library page.
+* Add local document indexing.
+* Add local retrieval support.
+* Add per-assignment “Use Course Knowledge Base” toggle.
+* Add source display and deletion controls.
+
+## Phase 11: Planner
+
+* Add Planner page.
+* Add student availability setup.
+* Add week/month/agenda/today views.
+* Add generate-plan logic.
+* Add editable study blocks.
+* Add drag-and-drop scheduling.
+* Add privacy confirmations for cloud-generated plans.
+
+## Phase 12: Rubric Checker
+
+* Add rubric and draft selection flow.
+* Add local/cloud model selection.
+* Add rubric analysis reports.
+* Add saved local reports and revision tracking.
+* Add strict no-auto-submit behavior.
+
+## Phase 13: Privacy Center
+
+* Add privacy dashboard.
+* Add local processing history.
+* Add provider controls.
+* Add local data deletion controls.
+* Add clear privacy badges throughout all major workflows.
+
+## Phase 14: What-If Grade Calculator
+
+* Add simulation tool within Grades.
+* Support weighted, points-estimate, and manual modes.
+* Add saved scenarios.
+* Add target-grade calculations.
+* Keep all calculations local and clearly unofficial.
+
+## Phase 15: Final Polish and QA
+
+* Ensure new pages match the premium UI system.
+* Verify loading, empty, offline, disconnected, permission denied, and data deletion states.
+* Verify cloud models always require explicit confirmation before academic content or files are transmitted.
+* Verify the Course Knowledge Base is optional and defaults to private/local behavior.
+* Verify assessments remain restricted to Study Guide Mode.
+* Verify the What-If Grade Calculator never presents projections as official.
+* Verify no provider secrets are logged or exposed.
+* Update README and environment variable setup documentation.
+
+# 10. Updated Acceptance Criteria
+
+The full student-focused update is complete only when all earlier acceptance criteria are satisfied and:
+
+1. Every assignment has a Materials panel.
+2. Accessible Canvas/Teams materials can appear as synced materials when supported by the provider.
+3. Students can upload related files to any assignment, including synced assignments.
+4. Before any assignment is sent to an AI model, the app asks whether the student wants to add related files.
+5. Students control which instructions, files, feedback, rubrics, or course materials are included in AI context.
+6. Cloud processing always requires a final confirmation listing the selected content being sent.
+7. Course Knowledge Base is optional, off by default, locally indexed, deletable, and usable through a per-assignment toggle.
+8. Planner generates editable study plans from assignments and due dates.
+9. Rubric Checker compares a student’s draft against an actual rubric and saves analysis locally.
+10. Privacy Center clearly shows local versus cloud usage and allows deletion of stored academic data.
+11. What-If Grade Calculator supports unofficial projections without changing or misrepresenting official course grades.
+12. All new pages match the app’s advanced, premium visual design and are accessible and responsive.
+
+Begin by merging these requirements into the existing implementation plan. Inspect the current code before making changes, reuse existing components and services, and preserve all working local AI functionality.

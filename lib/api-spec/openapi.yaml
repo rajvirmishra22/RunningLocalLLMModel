@@ -10,6 +10,13 @@ servers:
 tags:
   - name: health
     description: Health operations
+  - name: canvas
+    description: >-
+      Stateless Canvas LMS proxy. The browser cannot call a school's Canvas REST
+      API directly (Canvas does not send permissive CORS headers), so these
+      endpoints forward authenticated requests on the client's behalf. The
+      student's personal access token is supplied in the request body, used once
+      to call Canvas, and never persisted server-side.
 paths:
   /healthz:
     get:
@@ -24,6 +31,110 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+  /canvas/test:
+    post:
+      operationId: canvasTestConnection
+      tags: [canvas]
+      summary: Validate a Canvas base URL + access token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CanvasAuthInput"
+      responses:
+        "200":
+          description: The authenticated Canvas user profile
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CanvasProfile"
+        "401":
+          description: Token rejected
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorResponse"
+  /canvas/courses:
+    post:
+      operationId: canvasListCourses
+      tags: [canvas]
+      summary: List the student's active courses
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CanvasAuthInput"
+      responses:
+        "200":
+          description: Active courses
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/CanvasCourse"
+  /canvas/assignments:
+    post:
+      operationId: canvasListAssignments
+      tags: [canvas]
+      summary: List assignments for a course
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CanvasCourseQuery"
+      responses:
+        "200":
+          description: Assignments
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/CanvasAssignment"
+  /canvas/submissions:
+    post:
+      operationId: canvasListSubmissions
+      tags: [canvas]
+      summary: List the student's own submissions/grades for a course
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CanvasCourseQuery"
+      responses:
+        "200":
+          description: Submissions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/CanvasSubmission"
+  /canvas/assignment-files:
+    post:
+      operationId: canvasListAssignmentFiles
+      tags: [canvas]
+      summary: List candidate teacher-provided files for an assignment
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CanvasAssignmentQuery"
+      responses:
+        "200":
+          description: Files linked to the assignment when discoverable
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/CanvasFile"
 components:
   schemas:
     HealthStatus:
@@ -33,4 +144,85 @@ components:
           type: string
       required:
         - status
-
+    ApiErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+    CanvasAuthInput:
+      type: object
+      required: [baseUrl, token]
+      properties:
+        baseUrl:
+          type: string
+          description: e.g. https://school.instructure.com
+        token:
+          type: string
+          description: Canvas personal access token (never stored server-side)
+    CanvasCourseQuery:
+      type: object
+      required: [baseUrl, token, courseId]
+      properties:
+        baseUrl: { type: string }
+        token: { type: string }
+        courseId: { type: string }
+    CanvasAssignmentQuery:
+      type: object
+      required: [baseUrl, token, courseId, assignmentId]
+      properties:
+        baseUrl: { type: string }
+        token: { type: string }
+        courseId: { type: string }
+        assignmentId: { type: string }
+    CanvasProfile:
+      type: object
+      required: [id, name]
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        primaryEmail: { type: ["string", "null"] }
+    CanvasCourse:
+      type: object
+      required: [id, name]
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        courseCode: { type: ["string", "null"] }
+        term: { type: ["string", "null"] }
+    CanvasAssignment:
+      type: object
+      required: [id, courseId, name]
+      properties:
+        id: { type: integer }
+        courseId: { type: integer }
+        name: { type: string }
+        description: { type: ["string", "null"] }
+        dueAt: { type: ["string", "null"] }
+        pointsPossible: { type: ["number", "null"] }
+        htmlUrl: { type: ["string", "null"] }
+        submissionTypes:
+          type: array
+          items: { type: string }
+        hasRubric: { type: boolean }
+    CanvasSubmission:
+      type: object
+      required: [assignmentId]
+      properties:
+        assignmentId: { type: integer }
+        score: { type: ["number", "null"] }
+        grade: { type: ["string", "null"] }
+        submittedAt: { type: ["string", "null"] }
+        late: { type: boolean }
+        workflowState: { type: ["string", "null"] }
+    CanvasFile:
+      type: object
+      required: [id, displayName]
+      properties:
+        id: { type: integer }
+        displayName: { type: string }
+        fileName: { type: ["string", "null"] }
+        contentType: { type: ["string", "null"] }
+        url: { type: ["string", "null"] }
+        sizeBytes: { type: ["number", "null"] }
+        kind: { type: ["string", "null"] }

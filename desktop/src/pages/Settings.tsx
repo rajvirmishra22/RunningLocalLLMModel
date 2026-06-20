@@ -1,11 +1,18 @@
 import { useEffect, useState } from "react";
-import { Trash2, Shield, Info, HardDrive, Cloud, Eye, EyeOff, CheckCircle2, XCircle, Loader2, ExternalLink, HelpCircle, ChevronDown, ImageIcon } from "lucide-react";
+import { Link } from "wouter";
+import { Trash2, Shield, Info, HardDrive, Cloud, Eye, EyeOff, CheckCircle2, XCircle, Loader2, ExternalLink, HelpCircle, ChevronDown, ImageIcon, Sparkles, Library, ChevronRight } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
+import { Slider } from "@/components/ui/slider";
+import { PrivacyBadge } from "@/components/studycore/PrivacyBadge";
 import { webllmService, isCustomCatalogSupported } from "@/services/webllmService";
+import { getAvailableModelGroups } from "@/services/studycore/aiRunner";
+import * as courseLibrary from "@/services/studycore/courseLibrary";
+import { storageSummary, formatBytes } from "@/services/studycore/privacy";
 import {
   loadCloudConfig,
   saveCloudConfig,
@@ -16,6 +23,40 @@ import {
   type CloudProvider,
   type CloudProviderConfig,
 } from "@/services/cloudProviders";
+
+const AI_PREFS_KEY = "sc_ai_prefs";
+
+interface AiPrefs {
+  defaultModelKey: string | null;
+  temperature: number;
+  maxTokens: number;
+}
+
+const DEFAULT_AI_PREFS: AiPrefs = {
+  defaultModelKey: null,
+  temperature: 0.7,
+  maxTokens: 2048,
+};
+
+const RESPONSE_LENGTHS: Array<{ value: number; label: string }> = [
+  { value: 1024, label: "Short (~750 words)" },
+  { value: 2048, label: "Medium (~1,500 words)" },
+  { value: 4096, label: "Long (~3,000 words)" },
+];
+
+function loadAiPrefs(): AiPrefs {
+  try {
+    const raw = localStorage.getItem(AI_PREFS_KEY);
+    if (!raw) return { ...DEFAULT_AI_PREFS };
+    return { ...DEFAULT_AI_PREFS, ...(JSON.parse(raw) as Partial<AiPrefs>) };
+  } catch {
+    return { ...DEFAULT_AI_PREFS };
+  }
+}
+
+function saveAiPrefs(p: AiPrefs): void {
+  localStorage.setItem(AI_PREFS_KEY, JSON.stringify(p));
+}
 
 type MtmdStatus = { installed: boolean; path: string; binDir: string };
 type MtmdInstallState =
@@ -28,7 +69,24 @@ export default function Settings() {
   const [modelUnloaded, setModelUnloaded] = useState(false);
   const [cloudCfg, setCloudCfg] = useState<CloudProviderConfig>(() => loadCloudConfig());
   const [savedNote, setSavedNote] = useState<string | null>(null);
+  const [aiPrefs, setAiPrefs] = useState<AiPrefs>(() => loadAiPrefs());
+  const [kbEnabled, setKbEnabled] = useState<boolean>(() => courseLibrary.isEnabled());
+  const [summary] = useState(() => storageSummary());
+  const modelGroups = getAvailableModelGroups();
   const isDesktop = isCustomCatalogSupported();
+
+  const updateAiPrefs = (next: AiPrefs) => {
+    setAiPrefs(next);
+    saveAiPrefs(next);
+    setSavedNote("Saved");
+    setTimeout(() => setSavedNote(null), 1500);
+  };
+
+  const toggleKb = (enabled: boolean) => {
+    if (enabled) courseLibrary.enable();
+    else courseLibrary.disable();
+    setKbEnabled(courseLibrary.isEnabled());
+  };
   const [mtmdStatus, setMtmdStatus] = useState<MtmdStatus | null>(null);
   const [mtmdSrc, setMtmdSrc] = useState("");
   const [mtmdInstall, setMtmdInstall] = useState<MtmdInstallState>({ state: "idle" });
@@ -145,6 +203,136 @@ export default function Settings() {
                   conversation still stays on your machine.
                 </p>
               </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card data-testid="card-ai-preferences">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-sm font-medium flex items-center gap-2">
+              <Sparkles className="w-4 h-4" />
+              AI Preferences
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-5">
+            <p className="text-xs text-muted-foreground">
+              Defaults used across StudyCore AI features (assignment help, rubric checks,
+              growth summaries). You can always change the model for an individual request.
+            </p>
+
+            <div className="space-y-1.5">
+              <Label htmlFor="default-model" className="text-xs">Default model</Label>
+              <select
+                id="default-model"
+                value={aiPrefs.defaultModelKey ?? ""}
+                onChange={(e) =>
+                  updateAiPrefs({ ...aiPrefs, defaultModelKey: e.target.value || null })
+                }
+                className="w-full h-9 text-sm bg-background border border-border rounded px-2"
+                data-testid="select-default-model"
+              >
+                <option value="">Recommended (auto-pick local)</option>
+                {modelGroups.map((g) => (
+                  <optgroup
+                    key={`${g.kind}-${g.provider ?? "local"}`}
+                    label={g.label}
+                  >
+                    {g.models.map((m) => {
+                      const key =
+                        g.kind === "local"
+                          ? `local::${m.id}`
+                          : `cloud::${g.provider}::${m.id}`;
+                      return (
+                        <option key={key} value={key}>
+                          {m.label}
+                          {m.note ? ` — ${m.note}` : ""}
+                        </option>
+                      );
+                    })}
+                  </optgroup>
+                ))}
+              </select>
+              <p className="text-[10px] text-muted-foreground">
+                Cloud models still require a per-request confirmation before anything leaves your device.
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <Label className="text-xs">Default temperature</Label>
+                <span className="text-xs font-mono text-muted-foreground" data-testid="text-temperature-value">
+                  {aiPrefs.temperature.toFixed(1)}
+                </span>
+              </div>
+              <Slider
+                value={[aiPrefs.temperature]}
+                min={0}
+                max={2}
+                step={0.1}
+                onValueChange={(v) =>
+                  updateAiPrefs({ ...aiPrefs, temperature: v[0] ?? DEFAULT_AI_PREFS.temperature })
+                }
+                data-testid="slider-temperature"
+              />
+              <p className="text-[10px] text-muted-foreground">
+                Lower is more focused and factual; higher is more creative.
+              </p>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label htmlFor="default-length" className="text-xs">Default response length</Label>
+              <select
+                id="default-length"
+                value={aiPrefs.maxTokens}
+                onChange={(e) =>
+                  updateAiPrefs({ ...aiPrefs, maxTokens: Number(e.target.value) })
+                }
+                className="w-full h-9 text-sm bg-background border border-border rounded px-2"
+                data-testid="select-default-length"
+              >
+                {RESPONSE_LENGTHS.map((l) => (
+                  <option key={l.value} value={l.value}>
+                    {l.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card data-testid="card-course-knowledge-base">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-sm font-medium flex items-center gap-2">
+              <Library className="w-4 h-4" />
+              Course Knowledge Base
+              <PrivacyBadge kind="local_only" size="sm" className="ml-1" />
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="flex items-start justify-between gap-4">
+              <div className="space-y-1">
+                <p className="text-sm font-medium">Index my course materials locally</p>
+                <p className="text-xs text-muted-foreground">
+                  When on, your uploaded materials are indexed <strong>on this device</strong> so
+                  AI help can cite them. It's off by default and nothing is ever uploaded — the
+                  index lives only in your browser{isDesktop ? "/on your device" : ""}.
+                </p>
+              </div>
+              <Switch
+                checked={kbEnabled}
+                onCheckedChange={toggleKb}
+                data-testid="switch-course-knowledge-base"
+              />
+            </div>
+            <div className="flex items-start gap-2 p-3 rounded-md bg-muted/40 border border-border">
+              <Info className="w-3.5 h-3.5 text-muted-foreground mt-0.5 flex-shrink-0" />
+              <p className="text-xs text-muted-foreground">
+                Manage which materials are indexed from the{" "}
+                <Link href="/library" className="text-primary hover:underline" data-testid="link-course-library">
+                  Course Library
+                </Link>{" "}
+                page. Turning this off here disables the knowledge base.
+              </p>
             </div>
           </CardContent>
         </Card>
@@ -380,6 +568,27 @@ export default function Settings() {
             </div>
           </CardContent>
         </Card>
+
+        <Link href="/privacy" data-testid="link-privacy-center">
+          <Card className="cursor-pointer transition-colors hover:border-primary/40 hover:bg-muted/30">
+            <CardContent className="flex items-center gap-3 py-4">
+              <div className="w-9 h-9 rounded-md bg-green-500/10 border border-green-500/20 flex items-center justify-center flex-shrink-0">
+                <Shield className="w-4 h-4 text-green-500" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-medium">Privacy Center</p>
+                <p className="text-xs text-muted-foreground">
+                  Review what's stored, what touched a model, and delete any data.{" "}
+                  {summary.cloudRequestsThisMonth} cloud request
+                  {summary.cloudRequestsThisMonth === 1 ? "" : "s"} this month ·{" "}
+                  {summary.cachedFileCount} cached file
+                  {summary.cachedFileCount === 1 ? "" : "s"} ({formatBytes(summary.cachedFileBytes)}).
+                </p>
+              </div>
+              <ChevronRight className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+            </CardContent>
+          </Card>
+        </Link>
 
         <div className="flex items-center justify-end">
           <p className="text-xs text-muted-foreground">LocalModel Studio v0.1.0</p>
