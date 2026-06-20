@@ -106,6 +106,7 @@ LocalModel Studio is for developers and AI enthusiasts who want to run open-sour
 
 ## User preferences
 
+- **The desktop `.exe` is the main product.** Every feature must be implemented in (or reflected into) the desktop build — never web-only. After any change to the web app (`artifacts/localmodel-studio/src/`), re-run the web→desktop mirror and preserve the Tauri overlays (see "Updating the desktop UI"). New `@workspace/*` imports in shared pages need a desktop alias + stub. Treat a feature as incomplete until it works in the desktop build.
 - UI should be modern and user friendly, but simple and not too much going on.
 - No third-party tools or external installs — the desktop app must work immediately after install with no additional downloads.
 - Keep the desktop installer small — bundle exactly one small starter model, not many.
