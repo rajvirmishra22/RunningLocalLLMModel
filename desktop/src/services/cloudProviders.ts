@@ -401,12 +401,68 @@ function extractToken(provider: CloudProvider, event: string): string | null {
   }
 }
 
+/**
+ * Pull the provider's structured error code/message out of a JSON error body.
+ * OpenAI: `{ error: { message, type, code } }`. Anthropic: `{ error: { type, message } }`.
+ */
+function parseProviderError(body: string): { code?: string; message?: string } {
+  try {
+    const data = JSON.parse(body);
+    const err = data?.error ?? data;
+    const code =
+      typeof err?.code === "string"
+        ? err.code
+        : typeof err?.type === "string"
+          ? err.type
+          : undefined;
+    const message = typeof err?.message === "string" ? err.message : undefined;
+    return { code, message };
+  } catch {
+    return {};
+  }
+}
+
 function humanizeHttpError(provider: CloudProvider, status: number, body: string): string {
   const name = provider === "openai" ? "OpenAI" : "Anthropic";
+  const billingUrl =
+    provider === "openai"
+      ? "platform.openai.com/settings/organization/billing"
+      : "console.anthropic.com/settings/billing";
   if (status === 401) return `${name} rejected the API key. Double-check it in Settings.`;
   if (status === 403) return `${name} blocked the request — the key may not have permission for this model.`;
   if (status === 404) return `${name} doesn't recognize that model name. Check the model ID in Settings.`;
-  if (status === 429) return `${name} rate-limited the request. You've hit your usage cap, or you're sending too fast.`;
+  if (status === 429) {
+    // A 429 means EITHER the account has no usable credit / billing isn't set up
+    // (OpenAI `insufficient_quota`, Anthropic low credit balance) OR you're
+    // genuinely sending requests too fast (`rate_limit_exceeded`). These need
+    // opposite fixes, so read the provider's own error code and say which it is —
+    // a single message after one request is almost always the billing case.
+    const { code, message } = parseProviderError(body);
+    const codeNorm = (code ?? "").toLowerCase();
+    const tag = `${code ?? ""} ${message ?? ""}`.toLowerCase();
+    // Check rate-limit first (and gate quota behind it) so a stray "billing"
+    // word in a genuine rate-limit message can't misclassify it as a credit issue.
+    const isRateLimit =
+      codeNorm === "rate_limit_exceeded" ||
+      codeNorm === "rate_limit_error" ||
+      tag.includes("rate_limit") ||
+      tag.includes("rate limit") ||
+      tag.includes("too many requests");
+    const isQuota =
+      !isRateLimit &&
+      (codeNorm === "insufficient_quota" ||
+        tag.includes("insufficient_quota") ||
+        tag.includes("exceeded your current quota") ||
+        tag.includes("credit balance") ||
+        tag.includes("billing"));
+    if (isQuota) {
+      return `${name} rejected the request because the account has no usable credit — billing isn't set up or the balance is empty. A valid API key alone isn't enough: add a payment method / credits at ${billingUrl}, then try again. (This is not about how fast you sent messages, and it's separate from a ChatGPT Plus / Claude Pro subscription — only pay-as-you-go API credit works here.)`;
+    }
+    if (isRateLimit) {
+      return `${name} is rate-limiting you — too many requests in a short window. Wait a few seconds and send again.`;
+    }
+    return `${name} returned 429 — usage cap or rate limit hit${code ? ` [${code}]` : ""}${message ? ` (${message})` : ""}.`;
+  }
   if (status === 402 || status === 400) {
     // Surface the provider's own message — usually informative.
     const snippet = body.length > 240 ? body.slice(0, 240) + "…" : body;
