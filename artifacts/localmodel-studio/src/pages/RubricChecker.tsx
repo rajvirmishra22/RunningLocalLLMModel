@@ -277,7 +277,7 @@ export default function RubricChecker() {
     setUsedChoice(
       r.processingType === "local"
         ? { kind: "local", modelId: r.generatedByModelId, label: r.generatedByModelId }
-        : { kind: "cloud", provider: "openai", model: r.generatedByModelId, label: r.generatedByModelId },
+        : { kind: "cloud", provider: "gemini", model: r.generatedByModelId, label: r.generatedByModelId },
     );
     setDraftLabel(r.draftLabel ?? "");
     setRawOutput("");

@@ -105,7 +105,7 @@ export default function Privacy() {
     {
       id: "keys",
       label: "API credentials",
-      description: "Removes saved OpenAI/Anthropic keys.",
+      description: "Removes your saved Gemini API key.",
       run: deleteApiCredentials,
     },
     {

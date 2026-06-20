@@ -252,7 +252,7 @@ export const webllmService = {
     if (images && images.length > 0) {
       onError(
         new Error(
-          "Image input isn't supported by the in-browser models yet. Pick a cloud model (OpenAI/Anthropic) or use the desktop build for local vision."
+          "Image input isn't supported by the in-browser models yet. Pick a vision-capable Gemini cloud model, or use the desktop build for local vision."
         )
       );
       return;

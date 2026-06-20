@@ -176,14 +176,11 @@ export default function Chat() {
 
   const cloudReady = provider !== "local" && hasKey(cloudCfg, provider);
   const chatReady = provider === "local" ? webllmReady : cloudReady;
-  const activeCloudModel =
-    provider === "openai" ? cloudCfg.openaiModel : provider === "anthropic" ? cloudCfg.anthropicModel : "";
+  const activeCloudModel = provider === "gemini" ? cloudCfg.geminiModel : "";
   const providerLabel =
     provider === "local"
       ? selectedProfile?.name ?? "Local"
-      : provider === "openai"
-        ? `OpenAI · ${cloudCfg.openaiModel}`
-        : `Anthropic · ${cloudCfg.anthropicModel}`;
+      : `Gemini · ${cloudCfg.geminiModel}`;
 
   const loadData = () => {
     const convs = storageService.getConversations();
@@ -397,7 +394,7 @@ export default function Chat() {
       return !!entry?.vision;
     }
     const cloudModel =
-      provider === "openai" ? cloudCfg.openaiModel : cloudCfg.anthropicModel;
+      cloudCfg.geminiModel;
     return cloudModelSupportsVision(provider, cloudModel);
   })();
 
@@ -411,12 +408,12 @@ export default function Chat() {
     if (provider !== "local" && !cloudReady) return;
 
     // The conversation's `modelId` is metadata only — for local runs it's the
-    // selected profile id, for cloud runs we synthesize one like "openai:gpt-4o"
-    // so conversation provenance stays accurate.
+    // selected profile id, for cloud runs we synthesize one like
+    // "gemini:gemini-2.5-flash" so conversation provenance stays accurate.
     const convModelId =
       provider === "local"
         ? selectedProfileId
-        : `${provider}:${provider === "openai" ? cloudCfg.openaiModel : cloudCfg.anthropicModel}`;
+        : `${provider}:${cloudCfg.geminiModel}`;
 
     let conv = activeConv;
     if (!conv) {
@@ -630,9 +627,9 @@ export default function Chat() {
     // count / 4 (rough English ratio) since the provider doesn't tell us the
     // exact token count mid-stream.
     const startedAt = performance.now();
-    const cloudProvider: CloudProvider = provider === "openai" ? "openai" : "anthropic";
-    const cloudModel = cloudProvider === "openai" ? cloudCfg.openaiModel : cloudCfg.anthropicModel;
-    const cloudKey = cloudProvider === "openai" ? cloudCfg.openaiKey : cloudCfg.anthropicKey;
+    const cloudProvider: CloudProvider = "gemini";
+    const cloudModel = cloudCfg.geminiModel;
+    const cloudKey = cloudCfg.geminiKey;
     const finishCloud = (aborted: boolean) => {
       const totalTimeMs = performance.now() - startedAt;
       const approxTokens = Math.max(1, Math.round(fullContent.length / 4));
@@ -647,7 +644,7 @@ export default function Chat() {
         tokensPerSec: approxTokens / (totalTimeMs / 1000),
         totalTimeMs,
         modelUsed: aborted ? `${cloudModel} (stopped)` : cloudModel,
-        runtimeUsed: cloudProvider === "openai" ? "OpenAI" : "Anthropic",
+        runtimeUsed: "Gemini",
       });
     };
 
@@ -778,16 +775,10 @@ export default function Chat() {
                   Local
                 </span>
               </SelectItem>
-              <SelectItem value="openai" className="text-xs" disabled={!hasKey(cloudCfg, "openai")}>
+              <SelectItem value="gemini" className="text-xs" disabled={!hasKey(cloudCfg, "gemini")}>
                 <span className="flex items-center gap-2">
                   <Cloud className="w-3 h-3 text-blue-400" />
-                  OpenAI {!hasKey(cloudCfg, "openai") && "(add key)"}
-                </span>
-              </SelectItem>
-              <SelectItem value="anthropic" className="text-xs" disabled={!hasKey(cloudCfg, "anthropic")}>
-                <span className="flex items-center gap-2">
-                  <Cloud className="w-3 h-3 text-orange-400" />
-                  Anthropic {!hasKey(cloudCfg, "anthropic") && "(add key)"}
+                  Gemini {!hasKey(cloudCfg, "gemini") && "(add key)"}
                 </span>
               </SelectItem>
             </SelectContent>
@@ -827,22 +818,13 @@ export default function Chat() {
               {isTauriRuntime ? "Native" : "In-Browser"}
             </span>
           )}
-          {provider === "openai" && (
+          {provider === "gemini" && (
             <span
-              data-testid="badge-cloud-openai"
+              data-testid="badge-cloud-gemini"
               className="text-[10px] px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-400 border border-blue-500/20 font-medium flex items-center gap-1"
             >
               <Cloud className="w-2.5 h-2.5" />
-              Sending to OpenAI
-            </span>
-          )}
-          {provider === "anthropic" && (
-            <span
-              data-testid="badge-cloud-anthropic"
-              className="text-[10px] px-2 py-0.5 rounded-full bg-orange-500/10 text-orange-400 border border-orange-500/20 font-medium flex items-center gap-1"
-            >
-              <Cloud className="w-2.5 h-2.5" />
-              Sending to Anthropic
+              Sending to Google (Gemini)
             </span>
           )}
           {provider !== "local" && !cloudReady && (
@@ -1050,7 +1032,7 @@ export default function Chat() {
                   !chatReady
                     ? provider === "local"
                       ? "Load the model above before chatting..."
-                      : `Add an ${provider === "openai" ? "OpenAI" : "Anthropic"} API key in Settings to chat.`
+                      : `Add a free Gemini API key in Settings to chat.`
                     : attachments.length > 0
                       ? "Add a question about the attached files… (Enter to send)"
                       : "Type a message… (Enter to send, Shift+Enter for newline)"
@@ -1092,7 +1074,7 @@ export default function Chat() {
               ) : (
                 <>
                   <Cloud className="w-2.5 h-2.5" />
-                  Messages are sent to {provider === "openai" ? "OpenAI" : "Anthropic"}. Billed to your account.
+                  Messages are sent to Google (Gemini) using your API key.
                 </>
               )}
             </p>

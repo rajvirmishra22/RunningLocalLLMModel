@@ -33,6 +33,9 @@ import {
   detectFamily,
 } from "@/services/webllmService";
 import { getSystemInfo } from "@/services/systemInfo";
+import { courseStore } from "@/services/studycore/store";
+import type { Course } from "@/services/studycore/types";
+import { SubjectRecommendations } from "@/components/studycore/SubjectRecommendations";
 
 const EMPTY_PROFILE: Omit<ModelProfile, "id"> = {
   name: "",
@@ -58,6 +61,7 @@ export default function Models() {
   const [editingProfile, setEditingProfile] = useState<ModelProfile | null>(null);
   const [form, setForm] = useState<Omit<ModelProfile, "id">>(EMPTY_PROFILE);
   const [customModels, setCustomModels] = useState<WebLLMModel[]>([]);
+  const [courses, setCourses] = useState<Course[]>([]);
   const [customDialogOpen, setCustomDialogOpen] = useState(false);
   const webgpuAvailable = webllmService.checkWebGPU();
   const customSupported = isCustomCatalogSupported();
@@ -74,6 +78,7 @@ export default function Models() {
   const loadData = () => {
     setProfiles(storageService.getModelProfiles());
     setCustomModels(listCustomModels());
+    setCourses(courseStore.list());
   };
 
   useEffect(() => { loadData(); }, []);
@@ -164,6 +169,14 @@ export default function Models() {
             </p>
           </div>
         )}
+
+        {/* Recommended for your subjects */}
+        <SubjectRecommendations
+          catalog={fullCatalog}
+          courses={courses}
+          onAdd={addWebLLMModel}
+          isAdded={(m) => profiles.some((p) => p.modelIdentifier === m.id)}
+        />
 
         {/* Your Profiles */}
         <section>

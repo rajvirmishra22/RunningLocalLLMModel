@@ -31,12 +31,10 @@ import { Separator } from "@/components/ui/separator";
 import { useToast } from "@/hooks/use-toast";
 import { PrivacyBadge } from "@/components/studycore/PrivacyBadge";
 import {
-  ANTHROPIC_MODEL_PRESETS,
-  OPENAI_MODEL_PRESETS,
+  GEMINI_MODEL_PRESETS,
   loadCloudConfig,
   saveCloudConfig,
   testProviderKey,
-  type CloudProvider,
 } from "@/services/cloudProviders";
 import { detectAssignmentType } from "@/services/studycore/assignmentType";
 import {
@@ -68,8 +66,7 @@ export default function Connections() {
 
       <CanvasCard />
       <Separator />
-      <CloudProviderCard provider="openai" />
-      <CloudProviderCard provider="anthropic" />
+      <CloudProviderCard />
       <Separator />
       <TeamsCard />
     </div>
@@ -316,25 +313,19 @@ function CanvasCard() {
   );
 }
 
-function CloudProviderCard({ provider }: { provider: CloudProvider }) {
+function CloudProviderCard() {
+  const provider = "gemini" as const;
   const { toast } = useToast();
   const cfg = loadCloudConfig();
-  const isOpenAI = provider === "openai";
-  const presets = isOpenAI ? OPENAI_MODEL_PRESETS : ANTHROPIC_MODEL_PRESETS;
-  const [key, setKey] = useState(isOpenAI ? cfg.openaiKey : cfg.anthropicKey);
-  const [model, setModel] = useState(isOpenAI ? cfg.openaiModel : cfg.anthropicModel);
+  const presets = GEMINI_MODEL_PRESETS;
+  const [key, setKey] = useState(cfg.geminiKey);
+  const [model, setModel] = useState(cfg.geminiModel);
   const [testing, setTesting] = useState(false);
-  const [result, setResult] = useState<"ok" | "fail" | null>(
-    (isOpenAI ? cfg.openaiKey : cfg.anthropicKey) ? "ok" : null,
-  );
+  const [result, setResult] = useState<"ok" | "fail" | null>(cfg.geminiKey ? "ok" : null);
 
   function save(nextKey: string, nextModel: string) {
     const current = loadCloudConfig();
-    saveCloudConfig(
-      isOpenAI
-        ? { ...current, openaiKey: nextKey.trim(), openaiModel: nextModel }
-        : { ...current, anthropicKey: nextKey.trim(), anthropicModel: nextModel },
-    );
+    saveCloudConfig({ ...current, geminiKey: nextKey.trim(), geminiModel: nextModel });
   }
 
   async function handleTest() {
@@ -345,7 +336,7 @@ function CloudProviderCard({ provider }: { provider: CloudProvider }) {
     if (res.ok) {
       setResult("ok");
       save(key, model);
-      toast({ title: `${isOpenAI ? "OpenAI" : "Anthropic"} key works` });
+      toast({ title: "Gemini key works" });
     } else {
       setResult("fail");
       toast({ title: "Key test failed", description: res.error, variant: "destructive" });
@@ -360,9 +351,9 @@ function CloudProviderCard({ provider }: { provider: CloudProvider }) {
             <Cloud className="w-5 h-5 text-amber-500" />
           </div>
           <div>
-            <h2 className="font-semibold">{isOpenAI ? "OpenAI" : "Anthropic"}</h2>
+            <h2 className="font-semibold">Google Gemini</h2>
             <p className="text-xs text-muted-foreground">
-              Optional. Bring your own developer API key to use cloud models.
+              Optional. Bring your own free API key to use Gemini's cloud models.
             </p>
           </div>
         </div>
@@ -384,7 +375,7 @@ function CloudProviderCard({ provider }: { provider: CloudProvider }) {
             id={`${provider}-key`}
             data-testid={`input-${provider}-key`}
             type="password"
-            placeholder={isOpenAI ? "sk-…" : "sk-ant-…"}
+            placeholder="AIza…"
             value={key}
             onChange={(e) => {
               setKey(e.target.value);
@@ -417,8 +408,16 @@ function CloudProviderCard({ provider }: { provider: CloudProvider }) {
       </div>
 
       <p className="text-xs text-muted-foreground">
-        A consumer ChatGPT Plus / Claude Pro plan won't work here — only a developer API key from
-        the provider's platform does. Keys are stored locally in this browser.
+        Get a free API key from{" "}
+        <a
+          href="https://aistudio.google.com/apikey"
+          target="_blank"
+          rel="noreferrer"
+          className="underline hover:text-foreground"
+        >
+          aistudio.google.com/apikey
+        </a>{" "}
+        — no credit card needed for the free tier. Keys are stored locally in this browser.
       </p>
 
       <Button onClick={handleTest} disabled={testing} variant="secondary" data-testid={`button-${provider}-test`}>

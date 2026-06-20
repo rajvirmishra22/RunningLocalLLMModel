@@ -6,8 +6,7 @@
 // academic features; they go through here so logging + privacy stay consistent.
 
 import {
-  ANTHROPIC_MODEL_PRESETS,
-  OPENAI_MODEL_PRESETS,
+  GEMINI_MODEL_PRESETS,
   hasKey,
   loadCloudConfig,
   streamCloudChat,
@@ -51,20 +50,12 @@ export function getAvailableModelGroups(): AvailableModelGroup[] {
   });
 
   const cfg = loadCloudConfig();
-  if (hasKey(cfg, "openai")) {
+  if (hasKey(cfg, "gemini")) {
     groups.push({
       kind: "cloud",
-      provider: "openai",
-      label: "OpenAI (cloud)",
-      models: OPENAI_MODEL_PRESETS.map((m) => ({ id: m.id, label: m.label, note: m.note })),
-    });
-  }
-  if (hasKey(cfg, "anthropic")) {
-    groups.push({
-      kind: "cloud",
-      provider: "anthropic",
-      label: "Anthropic (cloud)",
-      models: ANTHROPIC_MODEL_PRESETS.map((m) => ({ id: m.id, label: m.label, note: m.note })),
+      provider: "gemini",
+      label: "Google Gemini (cloud)",
+      models: GEMINI_MODEL_PRESETS.map((m) => ({ id: m.id, label: m.label, note: m.note })),
     });
   }
 
@@ -133,10 +124,10 @@ export async function runHelp(opts: RunHelpOptions): Promise<void> {
 
   if (choice.kind === "cloud") {
     const cfg = loadCloudConfig();
-    const apiKey = choice.provider === "openai" ? cfg.openaiKey : cfg.anthropicKey;
+    const apiKey = cfg.geminiKey;
     const messages: CloudMessage[] = [];
-    // Cloud APIs here take user/assistant turns; fold the system prompt into
-    // the first user turn so both providers behave consistently.
+    // Gemini takes user/model turns; fold any system prompt into the first
+    // user turn so a single assembled prompt reaches the model.
     const userContent = systemPrompt ? `${systemPrompt}\n\n${prompt}` : prompt;
     messages.push({ role: "user", content: userContent });
     await streamCloudChat(

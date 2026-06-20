@@ -34,7 +34,7 @@ export function logProcessing(entry: {
   actionType: ProcessingActionType;
   modelId: string;
   processingType: "local" | "cloud";
-  provider?: "openai" | "anthropic";
+  provider?: "gemini";
   includedFiles?: boolean;
   includedCourseLibraryExcerpts?: boolean;
 }): ProcessingHistoryEntry {

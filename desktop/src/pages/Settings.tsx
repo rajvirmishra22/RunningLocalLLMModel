@@ -18,8 +18,7 @@ import {
   saveCloudConfig,
   clearCloudConfig,
   testProviderKey,
-  OPENAI_MODEL_PRESETS,
-  ANTHROPIC_MODEL_PRESETS,
+  GEMINI_MODEL_PRESETS,
   type CloudProvider,
   type CloudProviderConfig,
 } from "@/services/cloudProviders";
@@ -198,8 +197,8 @@ export default function Settings() {
                 <p className="text-xs font-medium text-green-500">Local-first by default</p>
                 <p className="text-xs text-muted-foreground mt-0.5">
                   Conversations, model profiles, and downloaded weights are stored locally{isDesktop ? " on your device" : " in your browser"}. When you
-                  chat with a local model, nothing leaves your device. If you opt into a cloud provider below,
-                  messages for <em>that</em> provider are sent to OpenAI or Anthropic — every other local model
+                  chat with a local model, nothing leaves your device. If you opt into Gemini below,
+                  messages you send to <em>it</em> are sent to Google — every other local model
                   conversation still stays on your machine.
                 </p>
               </div>
@@ -341,36 +340,27 @@ export default function Settings() {
           <CardHeader className="pb-3">
             <CardTitle className="text-sm font-medium flex items-center gap-2">
               <Cloud className="w-4 h-4" />
-              Cloud Providers (Optional)
+              Cloud AI (Optional)
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-5">
             <div className="text-xs text-muted-foreground space-y-1.5">
               <p>
-                Bring your own API key from OpenAI or Anthropic to use their cloud models alongside local. Keys are
+                Bring your own Google Gemini API key to use Gemini's cloud models alongside your local ones. Keys are
                 stored only in this browser, in <code className="text-[10px] bg-muted px-1 py-0.5 rounded">localStorage</code>.
               </p>
-              <p className="text-amber-500/90">
-                <strong>Heads up:</strong> A ChatGPT Plus or Claude Pro subscription does <em>not</em> give third-party
-                apps access. Only a developer API key (billed per token) works — see the "How do I get a key?" link under
-                each provider below.
+              <p className="text-green-500/90">
+                <strong>It's free:</strong> Google AI Studio gives out an API key with a free tier — no credit card
+                required. See "How do I get a key?" below.
               </p>
             </div>
 
             <ProviderRow
-              provider="openai"
-              label="OpenAI"
+              provider="gemini"
+              label="Google Gemini"
               cfg={cloudCfg}
               onChange={updateCfg}
-              presets={OPENAI_MODEL_PRESETS}
-            />
-            <Separator />
-            <ProviderRow
-              provider="anthropic"
-              label="Anthropic (Claude)"
-              cfg={cloudCfg}
-              onChange={updateCfg}
-              presets={ANTHROPIC_MODEL_PRESETS}
+              presets={GEMINI_MODEL_PRESETS}
             />
 
             <div className="flex items-center justify-between pt-2">
@@ -621,81 +611,42 @@ function ProviderRow({
   const [status, setStatus] = useState<TestStatus>({ state: "idle" });
   const [showHelp, setShowHelp] = useState(false);
 
-  const help =
-    provider === "openai"
-      ? {
-          consoleUrl: "https://platform.openai.com/api-keys",
-          consoleLabel: "platform.openai.com/api-keys",
-          billingUrl: "https://platform.openai.com/settings/organization/billing/overview",
-          billingLabel: "platform.openai.com → Billing",
-          prefix: "sk-",
-          steps: [
-            <>
-              Open{" "}
-              <a
-                href="https://platform.openai.com/api-keys"
-                target="_blank"
-                rel="noreferrer"
-                className="underline hover:text-foreground inline-flex items-center gap-0.5"
-              >
-                platform.openai.com/api-keys <ExternalLink className="w-2.5 h-2.5" />
-              </a>{" "}
-              and sign in. This is the <em>developer</em> dashboard, not chat.openai.com.
-            </>,
-            <>
-              If this is your first key, click your profile in the top-right →{" "}
-              <strong>Billing</strong> and add a payment method or buy a small credit (a
-              few dollars is enough to start). API access stays disabled without it.
-            </>,
-            <>
-              Back on the API keys page, click <strong>"Create new secret key"</strong>.
-              Give it a name like <em>LocalModel Studio</em>. Leave permissions on "All".
-            </>,
-            <>
-              Copy the key (starts with <code className="text-[10px] bg-muted px-1 py-0.5 rounded">sk-</code>) —
-              OpenAI only shows it <strong>once</strong>. Paste it into the API Key field
-              below and click <strong>Test</strong>.
-            </>,
-          ],
-        }
-      : {
-          consoleUrl: "https://console.anthropic.com/settings/keys",
-          consoleLabel: "console.anthropic.com/settings/keys",
-          billingUrl: "https://console.anthropic.com/settings/billing",
-          billingLabel: "console.anthropic.com → Plans & Billing",
-          prefix: "sk-ant-",
-          steps: [
-            <>
-              Open{" "}
-              <a
-                href="https://console.anthropic.com/settings/keys"
-                target="_blank"
-                rel="noreferrer"
-                className="underline hover:text-foreground inline-flex items-center gap-0.5"
-              >
-                console.anthropic.com/settings/keys <ExternalLink className="w-2.5 h-2.5" />
-              </a>{" "}
-              and sign in. This is the <em>developer console</em>, not claude.ai.
-            </>,
-            <>
-              First time only: go to <strong>Plans & Billing</strong> in the left sidebar
-              and buy a small credit pack (Anthropic requires prepaid credit before the
-              API will respond — a Claude Pro subscription does <em>not</em> count).
-            </>,
-            <>
-              Back on the API Keys page, click <strong>"Create Key"</strong>. Give it a
-              name like <em>LocalModel Studio</em> and leave it on the default workspace.
-            </>,
-            <>
-              Copy the key (starts with <code className="text-[10px] bg-muted px-1 py-0.5 rounded">sk-ant-</code>) —
-              Anthropic only shows it <strong>once</strong>. Paste it into the API Key
-              field below and click <strong>Test</strong>.
-            </>,
-          ],
-        };
+  const help = {
+    consoleUrl: "https://aistudio.google.com/apikey",
+    consoleLabel: "aistudio.google.com/apikey",
+    billingUrl: "https://ai.google.dev/gemini-api/docs/rate-limits",
+    billingLabel: "Gemini free-tier limits",
+    prefix: "AIza",
+    steps: [
+      <>
+        Open{" "}
+        <a
+          href="https://aistudio.google.com/apikey"
+          target="_blank"
+          rel="noreferrer"
+          className="underline hover:text-foreground inline-flex items-center gap-0.5"
+        >
+          aistudio.google.com/apikey <ExternalLink className="w-2.5 h-2.5" />
+        </a>{" "}
+        and sign in with any Google account.
+      </>,
+      <>
+        Click <strong>"Create API key"</strong>. You can create it in a new project — no
+        billing setup or credit card is required for the free tier.
+      </>,
+      <>
+        Copy the key (starts with <code className="text-[10px] bg-muted px-1 py-0.5 rounded">AIza</code>).
+        You can view it again later in AI Studio, so it's fine if you don't save it elsewhere.
+      </>,
+      <>
+        Paste it into the API Key field below and click <strong>Test</strong>. Then pick a
+        model — <em>Gemini 2.5 Flash</em> is a great, fast default.
+      </>,
+    ],
+  };
 
-  const keyField = provider === "openai" ? "openaiKey" : "anthropicKey";
-  const modelField = provider === "openai" ? "openaiModel" : "anthropicModel";
+  const keyField = "geminiKey";
+  const modelField = "geminiModel";
   const key = cfg[keyField];
   const model = cfg[modelField];
 
@@ -777,9 +728,9 @@ function ProviderRow({
               {help.billingLabel}
             </a>
           </div>
-          <p className="text-[10px] text-amber-500/90 pt-1">
-            Costs are billed by the provider per token used — not by us. A small
-            starter credit (≈ $5) is usually enough for thousands of chat messages.
+          <p className="text-[10px] text-green-500/90 pt-1">
+            Gemini's free tier covers thousands of messages a day at no cost — Google just
+            limits how many requests you can send per minute and per day. No card required.
           </p>
         </div>
       )}
@@ -791,7 +742,7 @@ function ProviderRow({
             type={showKey ? "text" : "password"}
             value={key}
             onChange={(e) => setKey(e.target.value)}
-            placeholder={provider === "openai" ? "sk-..." : "sk-ant-..."}
+            placeholder="AIza..."
             className="h-8 text-xs font-mono"
             data-testid={`input-${provider}-key`}
             autoComplete="off"

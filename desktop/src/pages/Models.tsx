@@ -54,6 +54,9 @@ import {
 } from "@/services/webllmService";
 import { getSystemInfo } from "@/services/systemInfo";
 import { estimateMemory } from "@/services/optimizationEngine";
+import { courseStore } from "@/services/studycore/store";
+import type { Course } from "@/services/studycore/types";
+import { SubjectRecommendations } from "@/components/studycore/SubjectRecommendations";
 
 /** Below this size we just start the download immediately. */
 const LARGE_DOWNLOAD_MB = 2 * 1024;
@@ -169,6 +172,7 @@ export default function Models() {
   const [editingProfile, setEditingProfile] = useState<ModelProfile | null>(null);
   const [form, setForm] = useState<Omit<ModelProfile, "id">>(EMPTY_PROFILE);
   const [customModels, setCustomModels] = useState<WebLLMModel[]>([]);
+  const [courses, setCourses] = useState<Course[]>([]);
   const [customDialogOpen, setCustomDialogOpen] = useState(false);
   const [downloadedIds, setDownloadedIds] = useState<Set<string>>(
     () => new Set([BUNDLED_MODEL_ID]),
@@ -219,6 +223,7 @@ export default function Models() {
   const loadData = () => {
     setProfiles(storageService.getModelProfiles());
     setCustomModels(listCustomModels());
+    setCourses(courseStore.list());
   };
 
   const refreshHeaderDisk = useCallback(async () => {
@@ -579,6 +584,14 @@ export default function Models() {
           activeDownloadId={activeDownloadId}
           labelByModelId={labelByModelId}
           onCancel={(id) => void handleCancelDownload(id)}
+        />
+
+        {/* Recommended for your subjects */}
+        <SubjectRecommendations
+          catalog={fullCatalog}
+          courses={courses}
+          onAdd={addWebLLMModel}
+          isAdded={(m) => profiles.some((p) => p.modelIdentifier === m.id)}
         />
 
         {/* Your Profiles */}
