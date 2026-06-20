@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { Link } from "wouter";
-import { Send, Square, Trash2, Plus, MessageSquare, Clock, Zap, Download, Loader2, AlertCircle, Globe, Sliders, Cloud, CloudOff, Paperclip, FileText, FileCode, FileSpreadsheet, X, BookOpen, ImageIcon } from "lucide-react";
+import { Send, Square, Trash2, Plus, MessageSquare, Clock, Zap, Download, Loader2, AlertCircle, Globe, Sliders, Cloud, CloudOff, Paperclip, FileText, FileCode, FileSpreadsheet, X, BookOpen, ImageIcon, Library } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -1211,6 +1211,22 @@ function MessageBubble({ message, modelName }: { message: Message; modelName?: s
             )}
           >
             <p className="text-sm whitespace-pre-wrap leading-relaxed">{message.content}</p>
+          </div>
+        )}
+        {!isUser && message.ragMeta && message.ragMeta.excerptCount > 0 && (
+          <div
+            data-testid={`rag-meta-${message.id}`}
+            className="mt-1.5 px-1 flex flex-wrap items-center gap-1.5"
+            title={message.ragMeta.docs.map((d) => `${d.name} (${d.usedExcerpts})`).join(", ")}
+          >
+            <span className="flex items-center gap-1 rounded-md border border-border bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">
+              <Library className="w-3 h-3 flex-shrink-0" />
+              {message.ragMeta.docs.length === 1
+                ? `Used ${message.ragMeta.excerptCount} ${
+                    message.ragMeta.excerptCount === 1 ? "excerpt" : "excerpts"
+                  } from ${message.ragMeta.docs[0].name}`
+                : `Used ${message.ragMeta.excerptCount} excerpts from ${message.ragMeta.docs.length} files`}
+            </span>
           </div>
         )}
         {message.stats && (
